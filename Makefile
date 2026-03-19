@@ -251,9 +251,7 @@ clean:
 	$U/usys.S \
 	$(UPROGS)
 
-# ==========================================
-# 终极版：本地运行与线上评测自适应切换逻辑
-# ==========================================
+
 HARD_CODE_INIT = 0
 
 ifeq ($(HARD_CODE_INIT), 1)
@@ -272,7 +270,7 @@ dump: $U/initcode
 	od -v -t x1 -An $U/initcode | sed -E 's/ (.{2})/0x\1,/g' > kernel/include/initcode.h
 endif
 
-# 希冀平台所使用的编译命令 (评测机专用)
+
 all:
 	@$(MAKE) clean
 	@$(MAKE) dump HARD_CODE_INIT=1
@@ -280,7 +278,7 @@ all:
 	cp $T/kernel ./kernel-qemu
 	cp $(RUSTSBI) ./sbi-qemu
 
-# 本地测试所使用的编译命令 (你自己跑 QEMU 专用)
+
 local:
 	@$(MAKE) clean
 	@$(MAKE) dump

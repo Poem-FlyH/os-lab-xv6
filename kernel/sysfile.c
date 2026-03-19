@@ -333,10 +333,9 @@ uint64
 sys_getcwd(void)
 {
   uint64 addr;
-  int size; // 新增：用于接收第二个参数 size
+  int size; 
 
-  // 修改1：同时获取 addr (buf) 和 size 两个参数
-  // 如果获取失败，返回 0 (相当于用户态的 NULL)
+
   if (argaddr(0, &addr) < 0 || argint(1, &size) < 0)
     return 0; 
 
@@ -354,24 +353,24 @@ sys_getcwd(void)
       len = strlen(de->filename);
       s -= len;
       if (s <= path)          // can't reach root "/"
-        return 0; // 修改2：内部错误也返回 0 (NULL)
+        return 0; // 
       strncpy(s, de->filename, len);
       *--s = '/';
       de = de->parent;
     }
   }
 
-  // 修改3：核心检查！判断用户传入的 size 是否足够装下整个路径（包含结尾的 '\0'）
+  // 
   if (strlen(s) + 1 > size) {
-    return 0; // 如果 size 太小，按照规范返回 0 (NULL)
+    return 0; // 
   }
 
-  // 将路径字符串拷贝到用户空间
+  // 
   // if (copyout(myproc()->pagetable, addr, s, strlen(s) + 1) < 0)
   if (copyout2(addr, s, strlen(s) + 1) < 0)
-    return 0; // 修改4：拷贝失败返回 0 (NULL)
+    return 0; // 
   
-  // 修改5：成功时，返回传入的 buf 地址！
+  // 
   return addr;
 }
 
