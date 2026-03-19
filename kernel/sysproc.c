@@ -155,7 +155,7 @@ sys_trace(void)
   myproc()->tmask = mask;
   return 0;
 }
-// 定义 Linux 标准的 uname 结构体
+// define
 struct utsname {
     char sysname[65];
     char nodename[65];
@@ -166,14 +166,14 @@ struct utsname {
 };
 
 uint64 sys_uname(void) {
-    uint64 addr; // 用户态传进来的结构体指针地址
+    uint64 addr; 
     struct utsname info;
 
-    // 1. 获取用户程序传进来的第一个参数（内存地址）
+    // get address
     if(argaddr(0, &addr) < 0)
         return -1;
 
-    // 2. 随便填入一些我们操作系统的名字和版本信息（测试程序只检查有没有成功返回内容）
+    // fill
     strncpy(info.sysname, "xv6-k210", 65);
     strncpy(info.nodename, "xv6-k210", 65);
     strncpy(info.release, "1.0", 65);
@@ -181,39 +181,39 @@ uint64 sys_uname(void) {
     strncpy(info.machine, "RISC-V", 65);
     strncpy(info.domainname, "none", 65);
 
-    // 3. 将我们在内核填好的结构体，拷贝回用户态的那块内存里
+    // copy
     if(copyout2(addr, (char *)&info, sizeof(info)) < 0)
         return -1;
 
-    return 0; // 成功返回 0
+    return 0; 
 }
-struct tms {
-    long tms_utime;  
-    long tms_stime;  
-    long tms_cutime; 
-    long tms_cstime; 
-};
+// struct tms {
+//     long tms_utime;  
+//     long tms_stime;  
+//     long tms_cutime; 
+//     long tms_cstime; 
+// };
 
-uint64 sys_times(void) {
-    uint64 addr;
-    if (argaddr(0, &addr) < 0) {
-        return -1;
-    }
+// uint64 sys_times(void) {
+//     uint64 addr;
+//     if (argaddr(0, &addr) < 0) {
+//         return -1;
+//     }
 
-    struct tms my_tms;
+//     struct tms my_tms;
     
-    // 参考答案的精髓：直接用全局 ticks 填充
-    acquire(&tickslock);
-    my_tms.tms_utime = ticks;
-    my_tms.tms_stime = ticks;
-    my_tms.tms_cutime = ticks;
-    my_tms.tms_cstime = ticks;
-    release(&tickslock);
+//   
+//     acquire(&tickslock);
+//     my_tms.tms_utime = ticks;
+//     my_tms.tms_stime = ticks;
+//     my_tms.tms_cutime = ticks;
+//     my_tms.tms_cstime = ticks;
+//     release(&tickslock);
 
-    if (copyout2(addr, (char *)&my_tms, sizeof(my_tms)) < 0) {
-        return -1;
-    }
+//     if (copyout2(addr, (char *)&my_tms, sizeof(my_tms)) < 0) {
+//         return -1;
+//     }
 
-    // 参考答案返回 0
-    return 0;
-}
+//   
+//     return 0;
+// }
