@@ -9,11 +9,16 @@
 // char *argv[] = { "sh", 0 };
 char *argv[] = { 0 };
 char* tests[] = {
-  "/getcwd",
-  "/write",
-  "/getpid",
-  "/times",
-  "/uname",
+  "/gettimeofday",
+  "/sleep",        // 用户态叫 sleep，底层调 nanosleep
+  "/clone",
+  "/wait",
+  "/waitpid",    
+  "/yield",       
+  "/getppid",
+  "/fork",        // (自带)
+  "/execve",      // (自带)
+  "/exit"         // (自带)
 };
 int
 main(void)
@@ -27,8 +32,8 @@ main(void)
   dev(O_RDWR, CONSOLE, 0);
   dup(0);  // stdout
   dup(0);  // stderr
-
-  for(int i=0; i<5; i++){
+  int length=sizeof(tests) / sizeof(tests[0]);
+  for(int i=0; i<length; i++){
     printf("init: starting sh\n");
     pid = fork();
     if(pid < 0){

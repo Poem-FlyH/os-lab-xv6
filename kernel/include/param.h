@@ -14,6 +14,8 @@
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 #define FSSIZE       1000  // size of file system in blocks
 #define MAXPATH      260   // maximum file path name
-#define INTERVAL     (390000000 / 200) // timer interrupt interval
-
+// #define INTERVAL     (390000000 / 200) // timer interrupt interval
+#define CLOCK_FREQ   10000000 // QEMU 的硬件频率 10 MHz
+#define TICKS_PER_SECOND    200 // 我们期望的每秒时钟中断次数
+#define INTERVAL     (CLOCK_FREQ / TICKS_PER_SECOND) // 每次时钟中断间隔的硬件 tick 数
 #endif

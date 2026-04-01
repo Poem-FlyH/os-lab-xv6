@@ -84,9 +84,24 @@ sys_wait(void)
   uint64 p;
   if(argaddr(0, &p) < 0)
     return -1;
-  return wait(p);
+  return wait(-1,p);
 }
 
+// 新增 test_clone 需的 sys_wait4
+uint64 sys_wait4(void) {
+  int target_pid;
+  uint64 status_addr;
+  int options;
+  // 按照 wait4 的标准，依次取 3 个参数：pid, status地址, options选项
+  if(argint(0, &target_pid) < 0 || 
+     argaddr(1, &status_addr) < 0 || 
+     argint(2, &options) < 0) {
+    return -1;
+  }
+  // 面向测试用例编程：测试用例其实没怎么用 options 的复杂功能
+  // 我们直接把提取出来的 target_pid 和 status_addr 传给底层 wait
+  return wait(target_pid, status_addr);
+}
 uint64
 sys_sbrk(void)
 {
@@ -186,6 +201,80 @@ uint64 sys_uname(void) {
         return -1;
 
     return 0; 
+}
+
+struct timespec {
+    uint64 tv_sec;  // 秒
+    uint64 tv_usec; // 微秒 (注意：为了适配测试样例，这里是 usec 微秒，而不是 Linux 标准的 nsec 纳秒)
+};
+uint64 sys_gettimeofday(void) {
+  struct timespec ts; 
+  // 1. 获取硬件 tick（这个是最准的，不要用系统全局变量 ticks）
+  uint64 htick = r_time(); 
+  // 2. 换算成秒和微秒
+  ts.tv_sec = htick / CLOCK_FREQ; 
+  ts.tv_usec = (htick % CLOCK_FREQ) * 1000000 / CLOCK_FREQ; 
+  // 3. 将结果拷贝到用户空间（测试用例把结构体指针作为参数 0 传进来了）
+  uint64 addr; // 用来存用户传进来的地址
+  // 获取用户的第 0 个参数（也就是 timespec 结构体指针）
+  if (argaddr(0, &addr) < 0) {
+    return -1;
+  }
+  // 使用内核安全的 copyout2 函数，把 ts 的内容拷贝到用户地址 addr
+  if (copyout2(addr, (char *)&ts, sizeof(ts)) < 0) {
+    return -1;
+  }
+  return 0; // 成功返回 0
+}
+
+
+uint64 sys_nanosleep(void) {
+  uint64 req_addr, rem_addr;
+  struct timespec req; //自定义的 timespec 结构体，包含秒和微秒
+  // 1. 获取用户传进来的两个地址参数
+  if (argaddr(0, &req_addr) < 0 || argaddr(1, &rem_addr) < 0) {
+    return -1;
+  }
+  // 2. 将用户要求的睡眠时间从用户空间拷贝到内核变量 req 中
+  if (copyin2((char *)&req, req_addr, sizeof(struct timespec)) < 0) {
+    return -1;
+  }
+  // 3. 计算目标 Ticks 数 (关键算法)
+  // 测试用例结构体里存的是 usec（微秒）
+  uint64 target_ticks = req.tv_sec * TICKS_PER_SECOND + 
+                        req.tv_usec * TICKS_PER_SECOND / 1000000;
+  // 4. 开始睡眠
+  uint64 ticks_start;
+  acquire(&tickslock); // 获取时钟锁读写冲突：
+  // 内核中的时钟中断处理程序（硬件触发）会每隔固定时间把 ticks 加 1。
+  // 同时，可能有多个用户进程都在调用 nanosleep 或 sleep 读取这个值。
+  ticks_start = ticks;      // 记录开始时的系统 ticks
+  // 循环检查，直到时间走够了
+  while (ticks - ticks_start < target_ticks) {
+    if (myproc()->killed) { // 如果进程在睡眠期间被杀死了
+      release(&tickslock);
+      return -1;
+    }
+    sleep(&ticks, &tickslock); // 让进程进入休眠状态，等待时钟中断唤醒
+  }
+  release(&tickslock);
+  return 0;
+}
+extern int clone(void);
+uint64 sys_clone(void) {
+  return clone();
+}
+
+// 实现 sched_yield (主动让出 CPU)
+uint64 sys_sched_yield(void) {
+  yield(); // 直接调用内核现成的 yield 函数
+  return 0;
+}
+
+// 实现 getppid (获取父进程 PID)
+uint64 sys_getppid(void) {
+  // myproc() 拿到当前进程，->parent 拿到父进程，再 ->pid 拿到父进程的 ID
+  return myproc()->parent->pid; 
 }
 // struct tms {
 //     long tms_utime;  

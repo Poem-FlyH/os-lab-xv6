@@ -475,7 +475,7 @@ exit(int status)
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
 int
-wait(uint64 addr)
+wait(int target_pid, uint64 addr)
 {
   struct proc *np;
   int havekids, pid;
@@ -495,12 +495,17 @@ wait(uint64 addr)
       if(np->parent == p){
         // np->parent can't change between the check and the acquire()
         // because only the parent changes it, and we're the parent.
+        if(target_pid > 0 && np->pid != target_pid){
+          havekids = 1; // 标记我们还是有子进程的，
+          continue;
+        }
         acquire(&np->lock);
         havekids = 1;
         if(np->state == ZOMBIE){
           // Found one.
           pid = np->pid;
-          if(addr != 0 && copyout2(addr, (char *)&np->xstate, sizeof(np->xstate)) < 0) {
+          int exit_status = np->xstate << 8;
+          if(addr != 0 && copyout2(addr, (char *)&exit_status, sizeof(exit_status)) < 0) {
             release(&np->lock);
             release(&p->lock);
             return -1;
@@ -798,3 +803,77 @@ procnum(void)
   return num;
 }
 
+extern int argaddr(int, uint64 *);
+int clone(void) {
+  struct proc *parent_proc = myproc();
+  struct proc *child_proc;
+  int process_id;
+  int fd_idx;
+  uint64 user_stack_ptr;
+
+  // 1. 为子进程/线程分配独立的 PCB 控制块
+  child_proc = allocproc();
+  if (child_proc == 0) {
+    return -1;
+  }
+
+  // 2. 复制父进程的完整内存空间
+  if (uvmcopy(parent_proc->pagetable, child_proc->pagetable, child_proc->kpagetable, parent_proc->sz) < 0) {
+    freeproc(child_proc);
+    release(&child_proc->lock);
+    return -1;
+  }
+  child_proc->sz = parent_proc->sz;
+
+  // 3. 继承上下文状态：复制陷入帧
+  *(child_proc->trapframe) = *(parent_proc->trapframe);
+
+  // 4. 获取用户态通过 a1 寄存器传入的新栈地址
+  argaddr(1, &user_stack_ptr);
+
+  // 判断是普通 fork 还是带有自定义栈的 clone
+  if (user_stack_ptr != 0) {
+    uint64 thread_func_addr;
+    uint64 func_param;
+    int fetch_func_res = copyin(parent_proc->pagetable, (char*)&thread_func_addr, user_stack_ptr, sizeof(thread_func_addr));
+    int fetch_arg_res  = copyin(parent_proc->pagetable, (char*)&func_param, user_stack_ptr + 8, sizeof(func_param));
+
+    // 检查读取是否出错
+    if (fetch_func_res < 0 || fetch_arg_res < 0) {
+      freeproc(child_proc);
+      release(&child_proc->lock);
+      return -1;
+    }
+
+    // 更新子线程的执行状态：挂载新栈、指定入口函数、压入参数
+    child_proc->trapframe->epc = thread_func_addr; 
+    child_proc->trapframe->a0 = func_param;        
+    child_proc->trapframe->sp = user_stack_ptr;    
+  } else {
+    // 退化为普通 fork，子进程默认返回 0
+    child_proc->trapframe->a0 = 0;
+  }
+
+  // 5. 继承父进程的打开文件描述符
+  for (fd_idx = 0; fd_idx < NOFILE; fd_idx++) {
+    if (parent_proc->ofile[fd_idx]) {
+      child_proc->ofile[fd_idx] = filedup(parent_proc->ofile[fd_idx]);
+    }
+  }
+
+  // 6. 继承工作目录与进程名
+  child_proc->cwd = edup(parent_proc->cwd);
+  safestrcpy(child_proc->name, parent_proc->name, sizeof(parent_proc->name));
+  
+  // 建立进程树关系
+  child_proc->parent = parent_proc;
+  
+  // 保存将要返回的子进程 PID
+  process_id = child_proc->pid;
+
+  // 7. 唤醒新进程，投入调度器队列
+  child_proc->state = RUNNABLE;
+  release(&child_proc->lock);
+
+  return process_id;
+}
