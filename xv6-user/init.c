@@ -19,6 +19,11 @@ char* tests[] = {
   "/fork",        // (自带)
   "/execve",      // (自带)
   "/exit"         // (自带)
+  "getcwd",
+  "write",
+  "getpid",
+  "times",
+  "uname",
 };
 int
 main(void)
