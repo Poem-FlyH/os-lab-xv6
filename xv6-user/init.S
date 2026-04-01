@@ -36,7 +36,7 @@ main:
 	call	dup@plt
 	li	s0,0
 	lla	s3,.LC0
-	li	s2,5
+	li	s2,14
 .L5:
 	mv	a0,s3
 	call	printf@plt
@@ -85,19 +85,46 @@ main:
 	.section	.rodata.str1.8
 	.align	3
 .LC4:
-	.string	"/getcwd"
+	.string	"/gettimeofday"
 	.align	3
 .LC5:
-	.string	"/write"
+	.string	"/sleep"
 	.align	3
 .LC6:
-	.string	"/getpid"
+	.string	"/clone"
 	.align	3
 .LC7:
-	.string	"/times"
+	.string	"/wait"
 	.align	3
 .LC8:
-	.string	"/uname"
+	.string	"/waitpid"
+	.align	3
+.LC9:
+	.string	"/yield"
+	.align	3
+.LC10:
+	.string	"/getppid"
+	.align	3
+.LC11:
+	.string	"/fork"
+	.align	3
+.LC12:
+	.string	"/execve"
+	.align	3
+.LC13:
+	.string	"/exitgetcwd"
+	.align	3
+.LC14:
+	.string	"write"
+	.align	3
+.LC15:
+	.string	"getpid"
+	.align	3
+.LC16:
+	.string	"times"
+	.align	3
+.LC17:
+	.string	"uname"
 	.globl	argv
 	.bss
 	.align	3
@@ -109,12 +136,21 @@ argv:
 	.align	3
 	.set	.LANCHOR0,. + 0
 	.type	tests, @object
-	.size	tests, 40
+	.size	tests, 112
 tests:
 	.dword	.LC4
 	.dword	.LC5
 	.dword	.LC6
 	.dword	.LC7
 	.dword	.LC8
+	.dword	.LC9
+	.dword	.LC10
+	.dword	.LC11
+	.dword	.LC12
+	.dword	.LC13
+	.dword	.LC14
+	.dword	.LC15
+	.dword	.LC16
+	.dword	.LC17
 	.ident	"GCC: (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0"
 	.section	.note.GNU-stack,"",@progbits
