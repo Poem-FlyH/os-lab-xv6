@@ -18,7 +18,7 @@ char* tests[] = {
   "/getppid",
   "/fork",        // (自带)
   "/execve",      // (自带)
-  "/exit"         // (自带)
+  "/exit",         // (自带)
   "getcwd",
   "write",
   "getpid",

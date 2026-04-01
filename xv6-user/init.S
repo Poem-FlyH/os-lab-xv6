@@ -36,7 +36,7 @@ main:
 	call	dup@plt
 	li	s0,0
 	lla	s3,.LC0
-	li	s2,14
+	li	s2,15
 .L5:
 	mv	a0,s3
 	call	printf@plt
@@ -112,18 +112,21 @@ main:
 	.string	"/execve"
 	.align	3
 .LC13:
-	.string	"/exitgetcwd"
+	.string	"/exit"
 	.align	3
 .LC14:
-	.string	"write"
+	.string	"getcwd"
 	.align	3
 .LC15:
-	.string	"getpid"
+	.string	"write"
 	.align	3
 .LC16:
-	.string	"times"
+	.string	"getpid"
 	.align	3
 .LC17:
+	.string	"times"
+	.align	3
+.LC18:
 	.string	"uname"
 	.globl	argv
 	.bss
@@ -136,7 +139,7 @@ argv:
 	.align	3
 	.set	.LANCHOR0,. + 0
 	.type	tests, @object
-	.size	tests, 112
+	.size	tests, 120
 tests:
 	.dword	.LC4
 	.dword	.LC5
@@ -152,5 +155,6 @@ tests:
 	.dword	.LC15
 	.dword	.LC16
 	.dword	.LC17
+	.dword	.LC18
 	.ident	"GCC: (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0"
 	.section	.note.GNU-stack,"",@progbits
