@@ -15,9 +15,11 @@
 #define SYS_dup         23
 #define SYS_getpid      172
 #define SYS_sbrk        12
+#define SYS_brk         214
 #define SYS_sleep       13
 #define SYS_uptime      14
-#define SYS_open        56
+#define SYS_open        55 //原本的56改为55
+#define SYS_openat      56
 #define SYS_write       64
 #define SYS_remove      31
 #define SYS_trace       18
@@ -38,5 +40,7 @@
 #define SYS_sched_yield 124
 #define SYS_getppid     173
 #define SYS_execve      221
+#define SYS_munmap     215   
+#define SYS_mmap       222 
 
 #endif

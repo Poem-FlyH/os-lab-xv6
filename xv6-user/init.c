@@ -24,6 +24,11 @@ char* tests[] = {
   "getpid",
   "times",
   "uname",
+  "open",
+  "openat",
+  "brk",
+  "mmap",
+  "munmap"
 };
 int
 main(void)

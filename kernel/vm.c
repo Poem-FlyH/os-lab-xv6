@@ -221,30 +221,58 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 // Remove npages of mappings starting from va. va must be
 // page-aligned. The mappings must exist.
 // Optionally free the physical memory.
-void
-vmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
-{
-  uint64 a;
-  pte_t *pte;
+// void
+// vmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+// {
+//   uint64 a;
+//   pte_t *pte;
 
-  if((va % PGSIZE) != 0)
-    panic("vmunmap: not aligned");
+//   if((va % PGSIZE) != 0)
+//     panic("vmunmap: not aligned");
 
-  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0)
-      panic("vmunmap: walk");
-    if((*pte & PTE_V) == 0)
-      panic("vmunmap: not mapped");
-    if(PTE_FLAGS(*pte) == PTE_V)
-      panic("vmunmap: not a leaf");
-    if(do_free){
-      uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
+//   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+//     if((pte = walk(pagetable, a, 0)) == 0)
+//       panic("vmunmap: walk");
+//     if((*pte & PTE_V) == 0)
+//       panic("vmunmap: not mapped");
+//     if(PTE_FLAGS(*pte) == PTE_V)
+//       panic("vmunmap: not a leaf");
+//     if(do_free){
+//       uint64 pa = PTE2PA(*pte);
+//       kfree((void*)pa);
+//     }
+//     *pte = 0;
+//   }
+// }
+/**
+ * @brief vmunmap 解除页表映射（兼容懒加载）
+ */
+void vmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free) {
+    if ((va % PGSIZE) != 0) panic("vmunmap: not aligned");
+    
+    uint64 end_va = va + npages * PGSIZE;
+
+    for (uint64 curr_va = va; curr_va < end_va; curr_va += PGSIZE) {
+        pte_t *pte_ptr = walk(pagetable, curr_va, 0);
+        
+        // 核心修复点：懒加载下，PTE 可能根本不存在，或者有效位为 0
+        // 如果是这两种情况，说明连物理页都没有，直接跳过即可，千万别 panic
+        if (!pte_ptr || !(*pte_ptr & PTE_V)) {
+            continue;
+        }
+        
+        if (PTE_FLAGS(*pte_ptr) == PTE_V) {
+            panic("vmunmap: not a leaf");
+        }
+        
+        if (do_free) {
+            uint64 physical_addr = PTE2PA(*pte_ptr);
+            kfree((void*)physical_addr);
+        }
+        
+        *pte_ptr = 0; // 清空页表项
     }
-    *pte = 0;
-  }
 }
-
 // create an empty user page table.
 // returns 0 if out of memory.
 pagetable_t
@@ -478,17 +506,24 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   return 0;
 }
 
-int
-copyin2(char *dst, uint64 srcva, uint64 len)
-{
-  uint64 sz = myproc()->sz;
-  if (srcva + len > sz || srcva >= sz) {
-    return -1;
-  }
-  memmove(dst, (void *)srcva, len);
-  return 0;
+// int
+// copyin2(char *dst, uint64 srcva, uint64 len)
+// {
+//   uint64 sz = myproc()->sz;
+//   if (srcva + len > sz || srcva >= sz) {
+//     return -1;
+//   }
+//   memmove(dst, (void *)srcva, len);
+//   return 0;
+// }
+/**
+ * @brief 修复 copyin2 拦截 mmap 区域数据的问题
+ */
+int copyin2(char* dst, uint64 srcva, uint64 len) {
+    // 不再自己做狭隘的边界判定，直接利用底层 copyin 函数的机制
+    struct proc* curr_p = myproc();
+    return copyin(curr_p->pagetable, dst, srcva, len);
 }
-
 // Copy a null-terminated string from user to kernel.
 // Copy bytes to dst from virtual address srcva in a given page table,
 // until a '\0', or max.
@@ -647,4 +682,83 @@ void vmprint(pagetable_t pagetable)
     }
   }
   return;
+}
+
+/**
+ * @brief 寻找合适的 mmap 虚拟地址空间
+ */
+uint64 locate_vma_space(struct proc* current_p, uint64 need_len) {
+    // 强制页对齐检查
+    if (need_len % PGSIZE) return 0;
+    
+    // 从最高地址开始探测
+    uint64 probe_addr = MMAPBASE;
+    
+    // 拦截越界情况
+    while (probe_addr > current_p->sz + need_len) {
+        probe_addr -= need_len;
+        int has_overlap = 0;
+
+        // 遍历现有的房产证
+        for (int idx = 0; idx < NVMA; idx++) {
+            struct vma* block = &current_p->vmas[idx];
+            
+            // 区间交集算法 (max_start < min_end) 
+            if (block->valid) {
+                if (probe_addr < block->end && (probe_addr + need_len) > block->start) {
+                    has_overlap = 1;
+                    // 既然这里被占了，直接把探测指针跳到这个块的下方，省去一步步减
+                    probe_addr = PGROUNDDOWN(block->start);
+                    break;
+                }
+            }
+        }
+        
+        // 如果一圈下来都没人占，这就是风水宝地
+        if (!has_overlap) return probe_addr;
+    }
+    
+    return 0; // 空间不够了
+}
+/**
+ * @brief 将共享 VMA 中的脏数据刷回磁盘
+ */
+void vma_writeback(struct proc* current_p, struct vma* target_vma) {
+    if (!target_vma->valid) return;
+    
+    // 只处理共享、可写且绑了文件的情况
+    if (!(target_vma->flags & MAP_SHARED) || !(target_vma->prot & PROT_WRITE) || !(target_vma->vm_file)) {
+        return;
+    }
+    if (!target_vma->vm_file->writable) return;
+
+    for (uint64 v_addr = target_vma->start; v_addr < target_vma->end; v_addr += PGSIZE) {
+        uint64 p_addr = walkaddr(current_p->pagetable, v_addr);
+        if (!p_addr) continue; // 懒加载没分配的页，不需要写回
+        
+        uint64 write_seek = target_vma->offset + (v_addr - target_vma->start);
+        elock(target_vma->vm_file->ep);
+        ewrite(target_vma->vm_file->ep, 0, p_addr, write_seek, PGSIZE);
+        eunlock(target_vma->vm_file->ep);
+    }
+}
+
+/**
+ * @brief 进程退出时的 VMA 大扫除
+ */
+void vma_free(struct proc* p) {
+    for (int j = 0; j < NVMA; j++) {
+        struct vma* item = &p->vmas[j];
+        if (item->valid) {
+            // 私有映射才需要释放物理内存，共享映射别动
+            int free_flag = (item->flags & MAP_SHARED) ? 0 : 1;
+            vmunmap(p->pagetable, item->start, (item->end - item->start) / PGSIZE, free_flag);
+            
+            if (item->vm_file) {
+                fileclose(item->vm_file);
+                item->vm_file = 0;
+            }
+            item->valid = 0;
+        }
+    }
 }

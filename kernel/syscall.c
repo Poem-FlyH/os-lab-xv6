@@ -102,9 +102,11 @@ extern uint64 sys_getpid(void);
 extern uint64 sys_kill(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_open(void);
+extern uint64 sys_openat(void);
 extern uint64 sys_pipe(void);
 extern uint64 sys_read(void);
 extern uint64 sys_sbrk(void);
+extern uint64 sys_brk(void);
 extern uint64 sys_sleep(void);
 extern uint64 sys_wait(void);
 extern uint64 sys_write(void);
@@ -126,10 +128,14 @@ extern uint64 sys_clone(void);
 extern uint64 sys_wait4(void);
 extern uint64 sys_sched_yield(void);
 extern uint64 sys_getppid(void);
+extern uint64 sys_mmap(void);
+extern uint64 sys_munmap(void);
 
 
 
 static uint64 (*syscalls[])(void) = {
+  [SYS_mmap]        sys_mmap,
+  [SYS_munmap]      sys_munmap,
   [SYS_fork]        sys_fork,
   [SYS_exit]        sys_exit,
   [SYS_wait]        sys_wait,
@@ -143,9 +149,11 @@ static uint64 (*syscalls[])(void) = {
   [SYS_dup]         sys_dup,
   [SYS_getpid]      sys_getpid,
   [SYS_sbrk]        sys_sbrk,
+  [SYS_brk]         sys_brk,
   [SYS_sleep]       sys_sleep,
   [SYS_uptime]      sys_uptime,
   [SYS_open]        sys_open,
+  [SYS_openat]      sys_openat,
   [SYS_write]       sys_write,
   [SYS_mkdir]       sys_mkdir,
   [SYS_close]       sys_close,
@@ -169,6 +177,8 @@ static uint64 (*syscalls[])(void) = {
 };
 
 static char *sysnames[] = {
+  [SYS_mmap]        "mmap",
+  [SYS_munmap]      "munmap",
   [SYS_fork]        "fork",
   [SYS_exit]        "exit",
   [SYS_wait]        "wait",
@@ -182,9 +192,11 @@ static char *sysnames[] = {
   [SYS_dup]         "dup",
   [SYS_getpid]      "getpid",
   [SYS_sbrk]        "sbrk",
+  [SYS_brk]         "brk",
   [SYS_sleep]       "sleep",
   [SYS_uptime]      "uptime",
   [SYS_open]        "open",
+  [SYS_openat]      "openat",
   [SYS_write]       "write", 
   [SYS_mkdir]       "mkdir",
   [SYS_close]       "close",

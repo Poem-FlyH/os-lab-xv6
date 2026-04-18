@@ -125,5 +125,7 @@
 #define TRAPFRAME               (TRAMPOLINE - PGSIZE)
 
 #define MAXUVA                  RUSTSBI_BASE
+// mmap 的最高地址，向下生长
+#define MMAPBASE 0x60000000L
 
 #endif

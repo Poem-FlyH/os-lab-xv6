@@ -503,3 +503,169 @@ fail:
     eput(src);
   return -1;
 }
+
+
+
+/**
+ * @brief 迭代法获取目录绝对路径
+ * 将 dirent 节点一层层上溯记录到数组中，最后正向拼接出完整路径。
+ */
+static int build_abs_path(struct dirent* node, char* buffer, int max_len) {
+    if (node == NULL) return -1;
+    struct dirent* path_stack[32]; // 假设最大目录深度为 32
+    int depth = 0;
+    struct dirent* curr = node;
+    
+    // 迭代向上追溯到根目录
+    while (curr->parent != NULL) {
+        if (depth >= 32) return -1; // 路径过深
+        path_stack[depth++] = curr;
+        curr = curr->parent;
+    }
+    
+    // 初始化根目录 "/"
+    if (max_len < 2) return -1;
+    buffer[0] = '/';
+    buffer[1] = '\0';
+    int current_len = 1;
+
+    // 倒序遍历数组，正向拼接路径
+    for (int i = depth - 1; i >= 0; i--) {
+        int name_len = strlen(path_stack[i]->filename);
+        if (current_len + name_len + 1 >= max_len) return -1;
+        
+        safestrcpy(buffer + current_len, path_stack[i]->filename, max_len - current_len);
+        current_len += name_len;
+        
+        // 如果不是最后一级，加斜杠
+        if (i > 0) {
+            buffer[current_len++] = '/';
+            buffer[current_len] = '\0';
+        }
+    }
+    return 0;
+}
+
+/**
+ * @brief 路径解析入口
+ */
+int resolve_path(int dirfd, char* usr_path) {
+    if (!usr_path) return -1;
+    if (usr_path[0] == '/') return 0; // 绝对路径
+    // 剥离开头的 "./"
+    char* rel_path = usr_path;
+    if (rel_path[0] == '.' && rel_path[1] == '/') {
+        rel_path += 2;
+    }
+
+    struct proc* p = myproc();
+    struct dirent* base_dir = NULL;
+
+    // 确定基准目录
+    if (dirfd == AT_FDCWD) {
+        base_dir = p->cwd;
+    } else {
+        if (dirfd < 0 || dirfd >= NOFILE) return -1;
+        struct file* base_f = p->ofile[dirfd];
+        // 确保 fd 有效且是个目录
+        if (base_f == NULL || !(base_f->ep->attribute & ATTR_DIRECTORY)) return -1;
+        base_dir = base_f->ep;
+    }
+
+    // 组装最终绝对路径
+    char base_buf[FAT32_MAX_PATH];
+    if (build_abs_path(base_dir, base_buf, FAT32_MAX_PATH) < 0) return -1;
+
+    char final_result[FAT32_MAX_PATH];
+    safestrcpy(final_result, base_buf, sizeof(final_result));
+    int baselen = strlen(final_result);
+
+    // 拼接基准路径与相对路径
+    if (baselen > 1) { // 如果基准路径不仅仅是根目录 "/"
+        if (baselen + 1 >= sizeof(final_result)) return -1;
+        final_result[baselen++] = '/';
+        final_result[baselen] = '\0';
+    }
+    safestrcpy(final_result + baselen, rel_path, sizeof(final_result) - baselen);
+    
+    // 写回原地址
+    safestrcpy(usr_path, final_result, FAT32_MAX_PATH);
+    return 0;
+}
+/**
+ * @brief sys_openat 实现
+ */
+uint64 sys_openat(void) {
+    char target_path[FAT32_MAX_PATH];
+    int dfd, file_flags, open_mode, out_fd;
+    struct file* new_file;
+    struct dirent* node;
+
+    // 1. 获取用户态参数
+    if (argint(0, &dfd) < 0 ||
+        argstr(1, target_path, FAT32_MAX_PATH) < 0 || //防止传入字符过长
+        argint(2, &file_flags) < 0 ||
+        argint(3, &open_mode) < 0) {
+        return -1;
+    }
+
+    if (target_path[0] == '\0') return -1;
+
+    // 2. 将相对路径转化为绝对路径
+    if (resolve_path(dfd, target_path) < 0) {
+        return -1;
+    }
+
+    // 3. 寻找或创建文件节点
+    if (file_flags & O_CREATE) {
+        node = create(target_path, T_FILE, open_mode);
+        if (node == NULL) return -1;
+    } else {
+        node = ename(target_path);
+        if (node == NULL) return -1;
+        elock(node);
+
+        // 修复判断 Bug：严格检查目录写权限
+        int is_dir = (node->attribute & ATTR_DIRECTORY);
+        int write_intent = (file_flags & (O_WRONLY | O_RDWR));
+        
+        if (is_dir && write_intent) {
+            eunlock(node);
+            eput(node);
+            return -1;
+        }
+    }
+
+    // 4. 为进程分配 file 结构和描述符
+    new_file = filealloc();
+    if (new_file == NULL) {
+        eunlock(node);
+        eput(node);
+        return -1;
+    }
+    
+    out_fd = fdalloc(new_file);
+    if (out_fd < 0) {
+        fileclose(new_file); // fileclose 内部处理回收
+        eunlock(node);
+        eput(node);
+        return -1;
+    }
+
+    // 5. 截断文件（如果是 O_TRUNC 且非目录）
+    if (!(node->attribute & ATTR_DIRECTORY) && (file_flags & O_TRUNC)) {
+        etrunc(node);
+    }
+
+    // 6. 初始化打开的文件属性
+    new_file->type = FD_ENTRY;
+    new_file->ep = node;
+    new_file->off = (file_flags & O_APPEND) ? node->file_size : 0;
+    
+    // 权限位设置
+    new_file->readable = !(file_flags & O_WRONLY);
+    new_file->writable = (file_flags & O_WRONLY) || (file_flags & O_RDWR);
+
+    eunlock(node);
+    return out_fd;
+}

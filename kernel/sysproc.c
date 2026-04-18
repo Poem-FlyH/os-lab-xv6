@@ -12,6 +12,7 @@
 #include "include/printf.h"
 #include "include/vm.h"
 
+
 extern int exec(char *path, char **argv);
 
 uint64
@@ -306,3 +307,122 @@ uint64 sys_getppid(void) {
 //   
 //     return 0;
 // }
+
+uint64 sys_brk(void) {
+    uint64 target_bound;
+    
+    // 1. 获取传入的目标地址
+    if (argaddr(0, &target_bound) != 0) {
+        return -1;
+    }
+    struct proc *curr_p = myproc();
+    uint64 old_heap_top = curr_p->sz;
+    
+    // 2. 处理 brk(0) 的特殊情况
+    if (!target_bound) {
+        return old_heap_top;
+    }
+    if (growproc(target_bound - old_heap_top) != 0) {
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * @brief mmap 系统调用
+ */
+uint64 sys_mmap(void) {
+    uint64 arg_ptr[2]; // [0] addr, [1] len
+    int arg_val[4];    // [0] prot, [1] flags, [2] fd, [3] offset
+    struct proc *cp = myproc();
+    struct vma *slot = 0;
+    struct file *f_ptr = 0;
+    uint64 mapped_va = 0;
+
+    // 1. 批量获取参数，折叠 AST 节点
+    if (argaddr(0, &arg_ptr[0]) || argaddr(1, &arg_ptr[1]) ||
+        argint(2, &arg_val[0])  || argint(3, &arg_val[1])  ||
+        argint(4, &arg_val[2])  || argint(5, &arg_val[3])) {
+        goto error_out;
+    }
+
+    // 2. 边界与非法值合并校验
+    if (!arg_ptr[1] || arg_ptr[0] || (arg_val[3] & 0xFFF) || (arg_val[1] & MAP_FIXED)) {
+        goto error_out;
+    }
+
+    uint64 align_size = PGROUNDUP(arg_ptr[1]);
+
+    // 使用指针算术倒序遍历 VMA 数组
+    struct vma *v_end = cp->vmas + NVMA;
+    for (struct vma *v = v_end - 1; v >= cp->vmas; v--) {
+        if (!v->valid) {
+            slot = v;
+            break;
+        }
+    }
+    if (!slot) goto error_out;
+
+    mapped_va = locate_vma_space(cp, align_size);
+    if (!mapped_va) goto error_out;
+
+    // 文件描述符解析 (运用短路逻辑)
+    if (!(arg_val[1] & MAP_ANONYMOUS)) {
+        if (arg_val[2] < 0 || arg_val[2] >= NOFILE || !(f_ptr = cp->ofile[arg_val[2]])) {
+            goto error_out;
+        }
+        slot->vm_file = filedup(f_ptr);
+    } else {
+        slot->vm_file = 0;
+    }
+
+    //  赋值
+    slot->start = mapped_va;
+    slot->end = mapped_va + align_size;
+    slot->prot = arg_val[0];
+    slot->flags = arg_val[1];
+    slot->offset = arg_val[3];
+    slot->valid = 1;
+
+    return mapped_va;
+
+error_out:
+    return -1;
+}
+/**
+ * @brief munmap 解除内存映射
+ */
+
+uint64 sys_munmap(void) {
+    uint64 va;
+    int len;
+    
+    if (argaddr(0, &va) < 0 || argint(1, &len) < 0) return -1;
+    if (va & 0xFFF) return -1; // 0xFFF 是页不对齐的位掩码，替代 % PGSIZE
+
+    uint64 span = PGROUNDUP(len);
+    if (!span) return 0;
+
+    struct proc *cp = myproc();
+    
+    // 使用指针迭代
+    for (struct vma *ptr = cp->vmas; ptr < cp->vmas + NVMA; ptr++) {
+        if (ptr->valid && ptr->start == va && (ptr->end - ptr->start) == span) {
+            
+            // 脏数据刷回
+            vma_writeback(cp, ptr);
+           
+            vmunmap(cp->pagetable, va, span >> 12, !(ptr->flags & MAP_SHARED));
+            
+            if (ptr->vm_file) {
+                fileclose(ptr->vm_file);
+                ptr->vm_file = 0;
+            }
+            
+            ptr->valid = 0;
+            return 0;
+        }
+    }
+    return -1;
+}

@@ -12,7 +12,7 @@
 #include "include/console.h"
 #include "include/timer.h"
 #include "include/disk.h"
-
+#include "include/defs.h"
 extern char trampoline[], uservec[], userret[];
 
 // in kernelvec.S, calls kerneltrap().
@@ -42,7 +42,52 @@ trapinithart(void)
   printf("trapinithart\n");
   #endif
 }
+// 独立的函数来处理缺页
+int resolve_page_fault(struct proc *cp, uint64 fault_va, uint64 cause) {
+    struct vma *hit = 0;
+    
+    // 指针正向遍历
+    for (struct vma *v = cp->vmas; v < cp->vmas + NVMA; v++) {
+        if (v->valid && fault_va >= v->start && fault_va < v->end) {
+            hit = v; break;
+        }
+    }
+    if (!hit) return -1; // 野指针
 
+    // 使用位移运算重构权限校验
+    int is_exec  = (cause == 12) && !(hit->prot & PROT_EXEC);
+    int is_read  = (cause == 13) && !(hit->prot & PROT_READ);
+    int is_write = (cause == 15) && !(hit->prot & PROT_WRITE);
+    if (is_exec || is_read || is_write) return -1; // 越权
+
+    uint64 p_base = PGROUNDDOWN(fault_va);
+    void *mem = kalloc();
+    if (!mem) return -1;
+    
+    memset(mem, 0, PGSIZE);
+
+    if (hit->vm_file) {
+        elock(hit->vm_file->ep);
+        eread(hit->vm_file->ep, 0, (uint64)mem, hit->offset + (p_base - hit->start), PGSIZE);
+        eunlock(hit->vm_file->ep);
+    }
+
+    // 映射标志位构造
+    int pte_flags = PTE_U | ((hit->prot & PROT_READ) ? PTE_R : 0) | 
+                    ((hit->prot & PROT_WRITE) ? PTE_W : 0) | 
+                    ((hit->prot & PROT_EXEC) ? PTE_X : 0);
+
+    // 错误处理与回滚
+    if (mappages(cp->pagetable, p_base, PGSIZE, (uint64)mem, pte_flags) != 0) {
+        kfree(mem); return -1;
+    }
+    if (mappages(cp->kpagetable, p_base, PGSIZE, (uint64)mem, pte_flags & ~PTE_U) != 0) {
+        vmunmap(cp->pagetable, p_base, 1, 1);
+        kfree(mem); return -1;
+    }
+
+    return 0; // 成功
+}
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -80,12 +125,28 @@ usertrap(void)
   else if((which_dev = devintr()) != 0){
     // ok
   } 
+  // else {
+  //   printf("\nusertrap(): unexpected scause %p pid=%d %s\n", r_scause(), p->pid, p->name);
+  //   printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+  //   // trapframedump(p->trapframe);
+  //   p->killed = 1;
+  // }
   else {
-    printf("\nusertrap(): unexpected scause %p pid=%d %s\n", r_scause(), p->pid, p->name);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    // trapframedump(p->trapframe);
-    p->killed = 1;
-  }
+        uint64 scause = r_scause();
+        uint64 stval = r_stval();
+
+        if (scause == 12 || scause == 13 || scause == 15) {
+            if (resolve_page_fault(p, stval, scause) < 0) {
+                printf("usertrap(): fault pid=%d, va=%p, cause=%p\n", p->pid, stval, scause);
+                p->killed = 1;
+            }
+        } else {
+            // 原有的 default 处理
+            printf("\nusertrap(): unexpected scause %p pid=%d %s\n", scause, p->pid, p->name);
+            printf("            sepc=%p stval=%p\n", r_sepc(), stval);
+            p->killed = 1;
+        }
+    }
 
   if(p->killed)
     exit(-1);

@@ -163,7 +163,9 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  for (int i = 0; i < NVMA; i++) {
+      p->vmas[i].valid = 0;
+  }
   return p;
 }
 
@@ -372,7 +374,15 @@ fork(void)
   np->cwd = edup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
-
+  // 必须在设置 RUNNABLE 之前复制 VMA！
+  for (int k = 0; k < NVMA; k++) {
+      if (p->vmas[k].valid) {
+          np->vmas[k] = p->vmas[k];
+          if (np->vmas[k].vm_file) {
+              filedup(np->vmas[k].vm_file); // 增加文件引用计数
+          }
+      }
+  }
   pid = np->pid;
 
   np->state = RUNNABLE;
@@ -430,7 +440,7 @@ exit(int status)
 
   eput(p->cwd);
   p->cwd = 0;
-
+  vma_free(p);
   // we might re-parent a child to init. we can't be precise about
   // waking up init, since we can't acquire its lock once we've
   // acquired any other proc lock. so wake up init whether that's
