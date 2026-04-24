@@ -154,3 +154,23 @@ sys_trace(void)
   myproc()->tmask = mask;
   return 0;
 }
+uint64
+sys_set_priority(void)
+{
+  int target_pri;
+  struct proc *curr_p = myproc(); 
+
+  // 如果获取参数失败
+  if (argint(0, &target_pri) != 0) {
+    return -1;
+  }
+
+  // 添加边界保护，防止恶意传入负数优先级
+  if (target_pri < 0) {
+    target_pri = 0; 
+  }
+
+  curr_p->static_prio = target_pri;
+  
+  return 0;
+}

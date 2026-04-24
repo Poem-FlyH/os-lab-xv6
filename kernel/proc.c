@@ -163,7 +163,7 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  p->static_prio = 50;
   return p;
 }
 
@@ -373,7 +373,8 @@ fork(void)
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
-
+  int parent_pri = p->static_prio;
+  np->static_prio = parent_pri;
   np->state = RUNNABLE;
 
   release(&np->lock);
@@ -531,42 +532,94 @@ wait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
-void
-scheduler(void)
+// void
+// scheduler(void)
+// {
+//   struct proc *p;
+//   struct cpu *c = mycpu();
+//   extern pagetable_t kernel_pagetable;
+
+//   c->proc = 0;
+//   for(;;){
+//     // Avoid deadlock by ensuring that devices can interrupt.
+//     intr_on();
+    
+//     int found = 0;
+//     for(p = proc; p < &proc[NPROC]; p++) {
+//       acquire(&p->lock);
+//       if(p->state == RUNNABLE) {
+//         // Switch to chosen process.  It is the process's job
+//         // to release its lock and then reacquire it
+//         // before jumping back to us.
+//         // printf("[scheduler]found runnable proc with pid: %d\n", p->pid);
+//         p->state = RUNNING;
+//         c->proc = p;
+//         w_satp(MAKE_SATP(p->kpagetable));
+//         sfence_vma();
+//         swtch(&c->context, &p->context);
+//         w_satp(MAKE_SATP(kernel_pagetable));
+//         sfence_vma();
+//         // Process is done running for now.
+//         // It should have changed its p->state before coming back.
+//         c->proc = 0;
+
+//         found = 1;
+//       }
+//       release(&p->lock);
+//     }
+//     if(found == 0) {
+//       intr_on();
+//       asm volatile("wfi");
+//     }
+//   }
+// }
+void scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
   extern pagetable_t kernel_pagetable;
 
   c->proc = 0;
-  for(;;){
-    // Avoid deadlock by ensuring that devices can interrupt.
+  for (;;)
+  {
     intr_on();
-    
-    int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        // printf("[scheduler]found runnable proc with pid: %d\n", p->pid);
-        p->state = RUNNING;
-        c->proc = p;
-        w_satp(MAKE_SATP(p->kpagetable));
-        sfence_vma();
-        swtch(&c->context, &p->context);
-        w_satp(MAKE_SATP(kernel_pagetable));
-        sfence_vma();
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
+    int min_val = 999999;       
+    int runnable_exists = 0;    
 
-        found = 1;
+    // [第一遍扫描]：不执行进程，只负责“摸底”
+    for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE) {
+        runnable_exists = 1; // 只要有能跑的，就打个标记
+        // 寻找数字最小的优先级
+        if (p->static_prio < min_val) {
+          min_val = p->static_prio;
+        }
       }
       release(&p->lock);
     }
-    if(found == 0) {
+
+    // [第二遍扫描]：根据摸底结果，执行优先级最高的进程
+    if (runnable_exists != 0) {
+      for (p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        // 必须既是就绪态，优先级又要刚好等于我们刚才找到的最小值
+        if (p->state == RUNNABLE && p->static_prio == min_val) {
+          p->state = RUNNING;
+          c->proc = p;
+          
+          w_satp(MAKE_SATP(p->kpagetable));
+          sfence_vma();
+          swtch(&c->context, &p->context);
+          w_satp(MAKE_SATP(kernel_pagetable));
+          sfence_vma();
+          
+          c->proc = 0;
+        }
+        release(&p->lock);
+      }
+    } else {
+      // 摸底发现没有任何进程可以跑，CPU 才可以睡觉
       intr_on();
       asm volatile("wfi");
     }
