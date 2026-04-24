@@ -170,7 +170,15 @@ sys_set_priority(void)
     target_pri = 0; 
   }
 
-  curr_p->static_prio = target_pri;
+  curr_p->base_pr = target_pri;
+  curr_p->curr_pr = target_pri; // 设置当前优先级为基本优先级
   
   return 0;
+}
+
+uint64
+sys_get_priority(void)
+{
+  // 测例需要看的是动态变化后的分数
+  return myproc()->curr_pr;
 }

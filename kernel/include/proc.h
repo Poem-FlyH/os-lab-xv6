@@ -65,6 +65,10 @@ struct proc {
   char name[16];               // Process name (debugging)
   int tmask;                    // trace mask
   int static_prio;             // 增加
+  int base_pr;     // z
+  int curr_pr;     // z
+  int slp_cnt;     // z
+  int yid_cnt;    //z
 };
 
 void            reg_info(void);

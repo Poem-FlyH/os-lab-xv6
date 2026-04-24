@@ -127,7 +127,7 @@ static struct proc*
 allocproc(void)
 {
   struct proc *p;
-
+  
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if(p->state == UNUSED) {
@@ -164,6 +164,10 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
   p->static_prio = 50;
+  p->base_pr = 50;
+  p->curr_pr = 50;
+  p->slp_cnt = 0;
+  p->yid_cnt = 0;
   return p;
 }
 
@@ -375,6 +379,10 @@ fork(void)
   pid = np->pid;
   int parent_pri = p->static_prio;
   np->static_prio = parent_pri;
+  np->base_pr = p->base_pr;
+  np->curr_pr = p->curr_pr;
+  np->slp_cnt = 0;  // 子进程的账本必须清零
+  np->yid_cnt = 0;
   np->state = RUNNABLE;
 
   release(&np->lock);
@@ -583,43 +591,44 @@ void scheduler(void)
   for (;;)
   {
     intr_on();
-    int min_val = 999999;       
-    int runnable_exists = 0;    
 
-    // [第一遍扫描]：不执行进程，只负责“摸底”
+    int top_dyn = 999999;
+    int top_base = 999999;
+    int is_active = 0;
+
+    // 第一遍：摸底寻优
     for (p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if (p->state == RUNNABLE) {
-        runnable_exists = 1; // 只要有能跑的，就打个标记
-        // 寻找数字最小的优先级
-        if (p->static_prio < min_val) {
-          min_val = p->static_prio;
+        is_active = 1;
+        if (p->curr_pr < top_dyn) {
+          top_dyn = p->curr_pr;
+          top_base = p->base_pr;
+        } else if (p->curr_pr == top_dyn && p->base_pr < top_base) {
+          top_base = p->base_pr;
         }
       }
       release(&p->lock);
     }
 
-    // [第二遍扫描]：根据摸底结果，执行优先级最高的进程
-    if (runnable_exists != 0) {
+    // 第二遍：送上 CPU
+    if (is_active != 0) {
       for (p = proc; p < &proc[NPROC]; p++) {
         acquire(&p->lock);
-        // 必须既是就绪态，优先级又要刚好等于我们刚才找到的最小值
-        if (p->state == RUNNABLE && p->static_prio == min_val) {
+        // 条件必须完全对齐
+        if (p->state == RUNNABLE && p->curr_pr == top_dyn && p->base_pr == top_base) {
           p->state = RUNNING;
           c->proc = p;
-          
           w_satp(MAKE_SATP(p->kpagetable));
           sfence_vma();
           swtch(&c->context, &p->context);
           w_satp(MAKE_SATP(kernel_pagetable));
           sfence_vma();
-          
           c->proc = 0;
         }
         release(&p->lock);
       }
     } else {
-      // 摸底发现没有任何进程可以跑，CPU 才可以睡觉
       intr_on();
       asm volatile("wfi");
     }
@@ -653,12 +662,37 @@ sched(void)
   mycpu()->intena = intena;
 }
 
+// is_io_wait: 1 代表主动睡(好)，0 代表被迫踢(坏)
+void recalc_process_prio(struct proc *pr, int is_io_wait) 
+{
+  if (is_io_wait) pr->slp_cnt++;
+  else pr->yid_cnt++;
+
+  int total = pr->slp_cnt + pr->yid_cnt;
+  
+
+  if (total >= 25) { 
+
+    if (pr->yid_cnt * 10 >= total * 7) {
+      if (pr->curr_pr < 100) pr->curr_pr++; // 降级惩罚
+    } 
+
+    else if (pr->yid_cnt * 10 <= total * 3) {
+      if (pr->curr_pr > 1) pr->curr_pr--;   // 升级奖励
+    }
+    
+    // 账本清零
+    pr->slp_cnt = 0;
+    pr->yid_cnt = 0;
+  }
+}
 // Give up the CPU for one scheduling round.
 void
 yield(void)
 {
   struct proc *p = myproc();
   acquire(&p->lock);
+  recalc_process_prio(p, 0);
   p->state = RUNNABLE;
   sched();
   release(&p->lock);
@@ -705,7 +739,7 @@ sleep(void *chan, struct spinlock *lk)
     acquire(&p->lock);  //DOC: sleeplock1
     release(lk);
   }
-
+  recalc_process_prio(p, 1);
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
