@@ -396,6 +396,7 @@ uvmcopy(pagetable_t old, pagetable_t new, pagetable_t knew, uint64 sz)
   pte_t *pte;
   uint64 pa, i = 0, ki = 0;
   uint flags;
+  char *mem;
 
   while (i < sz){
     if((pte = walk(old, i, 0)) == NULL)
@@ -404,36 +405,24 @@ uvmcopy(pagetable_t old, pagetable_t new, pagetable_t knew, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-
-    uint64 child_flags = flags;
-    int need_cow = 0;
-
-    if ((flags & PTE_W) || (flags & PTE_COW)) {
-      child_flags = (child_flags & ~PTE_W) | PTE_COW;
-      need_cow = 1;
+    if((mem = kalloc()) == NULL)
+      goto err;
+    memmove(mem, (char*)pa, PGSIZE);
+    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
+      kfree(mem);
+      goto err;
     }
-
-    if (mappages(new, i, PGSIZE, pa, child_flags) != 0)
-      goto err;
     i += PGSIZE;
-
-    uint64 kchild_flags = (child_flags & ~PTE_U) & ~PTE_COW;
-    if (mappages(knew, ki, PGSIZE, pa, kchild_flags) != 0)
+    if(mappages(knew, ki, PGSIZE, (uint64)mem, flags & ~PTE_U) != 0){
       goto err;
-    incref(pa);
-
-    if (need_cow) {
-      *pte = PA2PTE(pa) | child_flags;
     }
     ki += PGSIZE;
   }
-  sfence_vma();
   return 0;
 
  err:
   vmunmap(knew, 0, ki / PGSIZE, 0);
   vmunmap(new, 0, i / PGSIZE, 1);
-  sfence_vma();
   return -1;
 }
 
@@ -474,75 +463,18 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   }
   return 0;
 }
-int
-cow_make_writable(struct proc *p, uint64 va)
-{
-  uint64 va0 = PGROUNDDOWN(va);
-  pte_t *pte = walk(p->pagetable, va0, 0);
-  if (pte == 0 || (*pte & PTE_V) == 0)
-    return -1;
-  if ((*pte & PTE_COW) == 0)
-    return 0;
 
-  uint64 pa = PTE2PA(*pte);
-  int ref = getref(pa);
-  if (ref < 1)
-    panic("cow_make_writable");
-
-  if (ref == 1) {
-    uint64 flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
-    *pte = PA2PTE(pa) | flags;
-    pte_t *kpte = walk(p->kpagetable, va0, 0);
-    if (kpte == 0) panic("cow_make_writable kpte");
-    uint64 kflags = (PTE_FLAGS(*kpte) | PTE_W) & ~PTE_COW;
-    *kpte = PA2PTE(pa) | kflags;
-    sfence_vma();
-    return 0;
-  }
-
-  char *mem = kalloc();
-  if (mem == 0) return -1;
-  memmove(mem, (char*)pa, PGSIZE);
-  uint64 flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
-  *pte = PA2PTE((uint64)mem) | flags;
-  pte_t *kpte = walk(p->kpagetable, va0, 0);
-  if (kpte == 0) panic("cow_make_writable kpte");
-  uint64 kflags = (PTE_FLAGS(*kpte) | PTE_W) & ~PTE_COW;
-  *kpte = PA2PTE((uint64)mem) | kflags;
-  sfence_vma();
-  kfree((void*)pa);
-  return 0;
-}
-// int
-// copyout2(uint64 dstva, char *src, uint64 len)
-// {
-//   uint64 sz = myproc()->sz;
-//   if (dstva + len > sz || dstva >= sz) {
-//     return -1;
-//   }
-//   memmove((void *)dstva, src, len);
-//   return 0;
-// }
 int
 copyout2(uint64 dstva, char *src, uint64 len)
 {
-  struct proc *p = myproc();
-  uint64 sz = p->sz;
-  if (dstva + len > sz || dstva >= sz)
+  uint64 sz = myproc()->sz;
+  if (dstva + len > sz || dstva >= sz) {
     return -1;
-  while (len > 0) {
-    uint64 va0 = PGROUNDDOWN(dstva);
-    if (cow_make_writable(p, va0) < 0)
-      return -1;
-    uint64 n = PGSIZE - (dstva - va0);
-    if (n > len) n = len;
-    memmove((void *)dstva, src, n);
-    len -= n;
-    src += n;
-    dstva = va0 + PGSIZE;
   }
+  memmove((void *)dstva, src, len);
   return 0;
 }
+
 // Copy from user to kernel.
 // Copy len bytes to dst from virtual address srcva in a given page table.
 // Return 0 on success, -1 on error.

@@ -45,7 +45,25 @@ trapinithart(void)
   printf("trapinithart\n");
   #endif
 }
+static int
+cow_handler(struct proc *p, uint64 scause, uint64 stval)
+{
+  if (scause != 15)
+    return -1;
 
+  uint64 va = PGROUNDDOWN(stval);
+  pte_t *pte = walk(p->pagetable, va, 0);
+  if (pte == 0)
+    return -1;
+  if ((*pte & PTE_COW) == 0)
+    return -1;
+
+  if (cow_make_writable(p, va) < 0) {
+    printf("cow_handler: out of memory\n");
+    p->killed = 1;
+  }
+  return 0;
+}
 // 处理堆懒分配的缺页异常
 static int
 lazy_handler(struct proc *p, uint64 stval)
@@ -127,10 +145,20 @@ usertrap(void)
   //   // trapframedump(p->trapframe);
   //   p->killed = 1;
   // }
-  else if (r_scause() == 13 || r_scause() == 15) {
-    // load/store page fault — 尝试懒分配
-    if (lazy_handler(p, r_stval()) < 0) {
-      printf("\nusertrap(): segfault pid=%d %s, va=%p\n", p->pid, p->name, r_stval());
+  // else if (r_scause() == 13 || r_scause() == 15) {
+  //   // load/store page fault — 尝试懒分配
+  //   if (lazy_handler(p, r_stval()) < 0) {
+  //     printf("\nusertrap(): segfault pid=%d %s, va=%p\n", p->pid, p->name, r_stval());
+  //     p->killed = 1;
+  //   }
+  // }
+  else if (r_scause() == 12 || r_scause() == 13 || r_scause() == 15) {
+    uint64 stval = r_stval();
+    uint64 scause = r_scause();
+    if (cow_handler(p, scause, stval) == 0) {
+      // COW handled
+    } else if (lazy_handler(p, stval) < 0) {
+      printf("\nusertrap(): segfault pid=%d %s, va=%p\n", p->pid, p->name, stval);
       p->killed = 1;
     }
   }

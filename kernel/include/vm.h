@@ -33,5 +33,7 @@ int             copyout2(uint64 dstva, char *src, uint64 len);
 int             copyin2(char *dst, uint64 srcva, uint64 len);
 int             copyinstr2(char *dst, uint64 srcva, uint64 max);
 void            vmprint(pagetable_t pagetable);
+struct proc;
+int             cow_make_writable(struct proc*, uint64);
 
 #endif 

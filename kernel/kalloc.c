@@ -25,6 +25,7 @@ struct {
   struct run *freelist;
   uint64 npage;
   uint64 totalpages;
+  int refcnt[PHYSTOP / PGSIZE];
 } kmem;
 
 void
@@ -41,41 +42,77 @@ kinit()
   #endif
 }
 
+// void
+// freerange(void *pa_start, void *pa_end)
+// {
+//   char *p;
+//   p = (char*)PGROUNDUP((uint64)pa_start);
+//   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
+//     kmem.totalpages++;
+//     kfree(p);
+//   }
+// }
 void
 freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE) {
     kmem.totalpages++;
+    kmem.refcnt[(uint64)p >> PGSHIFT] = 1;
     kfree(p);
   }
 }
-
 // Free the page of physical memory pointed at by v,
 // which normally should have been returned by a
 // call to kalloc().  (The exception is when
 // initializing the allocator; see kinit above.)
+// void
+// kfree(void *pa)
+// {
+//   struct run *r;
+  
+//   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < kernel_end || (uint64)pa >= PHYSTOP)
+//     panic("kfree");
+
+//   // Fill with junk to catch dangling refs.
+//   memset(pa, 1, PGSIZE);
+
+//   r = (struct run*)pa;
+
+//   acquire(&kmem.lock);
+//   r->next = kmem.freelist;
+//   kmem.freelist = r;
+//   kmem.npage++;
+//   release(&kmem.lock);
+// }
 void
 kfree(void *pa)
 {
   struct run *r;
-  
+
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < kernel_end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
-  // Fill with junk to catch dangling refs.
+  acquire(&kmem.lock);
+  int idx = (uint64)pa >> PGSHIFT;
+  if(kmem.refcnt[idx] < 1)
+    panic("kfree: refcnt");
+  kmem.refcnt[idx]--;
+  if(kmem.refcnt[idx] > 0){
+    release(&kmem.lock);
+    return;
+  }
+  release(&kmem.lock);
+
   memset(pa, 1, PGSIZE);
-
   r = (struct run*)pa;
-
   acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
   kmem.npage++;
   release(&kmem.lock);
 }
-
 // Allocate one 4096-byte page of physical memory.
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
@@ -86,9 +123,14 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
+  // if(r) {
+  //   kmem.freelist = r->next;
+  //   kmem.npage--;
+  // }
   if(r) {
     kmem.freelist = r->next;
     kmem.npage--;
+    kmem.refcnt[(uint64)r >> PGSHIFT] = 1;
   }
   release(&kmem.lock);
 
@@ -112,4 +154,20 @@ allocated_pages(void)
   release(&kmem.lock);
   if (total < free) return 0;
   return total - free;
+}
+void
+incref(uint64 pa)
+{
+  acquire(&kmem.lock);
+  kmem.refcnt[pa >> PGSHIFT]++;
+  release(&kmem.lock);
+}
+
+int
+getref(uint64 pa)
+{
+  acquire(&kmem.lock);
+  int cnt = kmem.refcnt[pa >> PGSHIFT];
+  release(&kmem.lock);
+  return cnt;
 }
