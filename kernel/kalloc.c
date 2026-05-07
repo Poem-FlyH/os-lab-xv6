@@ -24,6 +24,7 @@ struct {
   struct spinlock lock;
   struct run *freelist;
   uint64 npage;
+  uint64 totalpages;
 } kmem;
 
 void
@@ -32,6 +33,7 @@ kinit()
   initlock(&kmem.lock, "kmem");
   kmem.freelist = 0;
   kmem.npage = 0;
+  kmem.totalpages = 0;  
   freerange(kernel_end, (void*)PHYSTOP);
   #ifdef DEBUG
   printf("kernel_end: %p, phystop: %p\n", kernel_end, (void*)PHYSTOP);
@@ -44,8 +46,10 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
+    kmem.totalpages++;
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by v,
@@ -97,4 +101,15 @@ uint64
 freemem_amount(void)
 {
   return kmem.npage << PGSHIFT;
+}
+uint64
+allocated_pages(void)
+{
+  uint64 free, total;
+  acquire(&kmem.lock);
+  free  = kmem.npage;
+  total = kmem.totalpages;
+  release(&kmem.lock);
+  if (total < free) return 0;
+  return total - free;
 }

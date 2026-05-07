@@ -313,24 +313,45 @@ userinit(void)
 
 // Grow or shrink user memory by n bytes.
 // Return 0 on success, -1 on failure.
+// int
+// growproc(int n)
+// {
+//   uint sz;
+//   struct proc *p = myproc();
+
+//   sz = p->sz;
+//   if(n > 0){
+//     if((sz = uvmalloc(p->pagetable, p->kpagetable, sz, sz + n)) == 0) {
+//       return -1;
+//     }
+//   } else if(n < 0){
+//     sz = uvmdealloc(p->pagetable, p->kpagetable, sz, sz + n);
+//   }
+//   p->sz = sz;
+//   return 0;
+// }
 int
 growproc(int n)
 {
-  uint sz;
   struct proc *p = myproc();
+  uint64 sz = p->sz;
 
-  sz = p->sz;
-  if(n > 0){
-    if((sz = uvmalloc(p->pagetable, p->kpagetable, sz, sz + n)) == 0) {
+  if (n > 0) {
+    // 懒分配：只改 sz，不实际分配物理页
+    uint64 newsz = sz + (uint64)n;
+    if (newsz < sz)          // 溢出检查
       return -1;
-    }
-  } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, p->kpagetable, sz, sz + n);
+    if (newsz >= TRAPFRAME)  // 不能超过用户地址空间上限
+      return -1;
+    p->sz = newsz;
+  } else if (n < 0) {
+    uint64 delta = (uint64)(-n);
+    uint64 newsz = (delta > sz) ? 0 : sz - delta;
+    uvmdealloc(p->pagetable, p->kpagetable, sz, newsz);
+    p->sz = newsz;
   }
-  p->sz = sz;
   return 0;
 }
-
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
 int

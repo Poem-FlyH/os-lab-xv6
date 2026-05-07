@@ -12,6 +12,9 @@
 #include "include/console.h"
 #include "include/timer.h"
 #include "include/disk.h"
+#include "include/kalloc.h"
+#include "include/vm.h"
+#include "include/string.h"
 
 extern char trampoline[], uservec[], userret[];
 
@@ -43,6 +46,44 @@ trapinithart(void)
   #endif
 }
 
+// 处理堆懒分配的缺页异常
+static int
+lazy_handler(struct proc *p, uint64 stval)
+{
+  // 地址超出堆上限，非法
+  if (stval >= p->sz || stval >= TRAPFRAME)
+    return -1;
+
+  uint64 va = PGROUNDDOWN(stval);
+  pte_t *pte = walk(p->pagetable, va, 0);
+  // 已经有有效映射，不需要懒分配
+  if (pte && (*pte & PTE_V))
+    return -1;
+
+  // 分配物理页
+  char *mem = kalloc();
+  if (mem == 0) {
+    printf("lazy_handler: out of memory\n");
+    p->killed = 1;
+    return 0;
+  }
+  memset(mem, 0, PGSIZE);
+
+  // 映射到用户页表
+  if (mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U) != 0) {
+    kfree(mem);
+    p->killed = 1;
+    return 0;
+  }
+  // 映射到内核页表（不带 PTE_U）
+  if (mappages(p->kpagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X) != 0) {
+    kfree(mem);
+    vmunmap(p->pagetable, va, 1, 0);
+    p->killed = 1;
+    return 0;
+  }
+  return 0;
+}
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -80,13 +121,24 @@ usertrap(void)
   else if((which_dev = devintr()) != 0){
     // ok
   } 
+  // else {
+  //   printf("\nusertrap(): unexpected scause %p pid=%d %s\n", r_scause(), p->pid, p->name);
+  //   printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+  //   // trapframedump(p->trapframe);
+  //   p->killed = 1;
+  // }
+  else if (r_scause() == 13 || r_scause() == 15) {
+    // load/store page fault — 尝试懒分配
+    if (lazy_handler(p, r_stval()) < 0) {
+      printf("\nusertrap(): segfault pid=%d %s, va=%p\n", p->pid, p->name, r_stval());
+      p->killed = 1;
+    }
+  }
   else {
     printf("\nusertrap(): unexpected scause %p pid=%d %s\n", r_scause(), p->pid, p->name);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    // trapframedump(p->trapframe);
     p->killed = 1;
   }
-
   if(p->killed)
     exit(-1);
 

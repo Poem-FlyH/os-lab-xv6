@@ -221,6 +221,29 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 // Remove npages of mappings starting from va. va must be
 // page-aligned. The mappings must exist.
 // Optionally free the physical memory.
+// void
+// vmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+// {
+//   uint64 a;
+//   pte_t *pte;
+
+//   if((va % PGSIZE) != 0)
+//     panic("vmunmap: not aligned");
+
+//   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+//     if((pte = walk(pagetable, a, 0)) == 0)
+//       panic("vmunmap: walk");
+//     if((*pte & PTE_V) == 0)
+//       panic("vmunmap: not mapped");
+//     if(PTE_FLAGS(*pte) == PTE_V)
+//       panic("vmunmap: not a leaf");
+//     if(do_free){
+//       uint64 pa = PTE2PA(*pte);
+//       kfree((void*)pa);
+//     }
+//     *pte = 0;
+//   }
+// }
 void
 vmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -232,9 +255,9 @@ vmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("vmunmap: walk");
+      continue;                        // 懒分配：页表不存在则跳过
     if((*pte & PTE_V) == 0)
-      panic("vmunmap: not mapped");
+      continue;                        // 懒分配：页未映射则跳过
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("vmunmap: not a leaf");
     if(do_free){
@@ -244,7 +267,6 @@ vmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     *pte = 0;
   }
 }
-
 // create an empty user page table.
 // returns 0 if out of memory.
 pagetable_t
