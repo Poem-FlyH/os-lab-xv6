@@ -123,6 +123,7 @@ extern uint64 sys_dup2(void);
 extern uint64 sys_set_priority(void);
 extern uint64 sys_get_priority(void);
 
+
 static uint64 (*syscalls[])(void) = {
   [SYS_fork]        sys_fork,
   [SYS_exit]        sys_exit,
