@@ -290,9 +290,11 @@ found:
   }
 
   p->kstack = VKSTACK;
-
   p->head.vm_prev = &p->head;
   p->head.vm_next = &p->head;
+  p->max_page_in_mem = 128;
+  p->cur_page_in_mem = 0;
+  p->page_swap_count = 0;
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -322,6 +324,9 @@ freeproc(struct proc *p)
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
+  p->max_page_in_mem = 0;
+  p->cur_page_in_mem = 0;
+  p->page_swap_count = 0;
   p->name[0] = 0;
   p->chan = 0;
   p->killed = 0;
@@ -493,6 +498,9 @@ fork(void)
 
   // copy tracing mask from parent.
   np->tmask = p->tmask;
+  np->max_page_in_mem = p->max_page_in_mem;
+  np->cur_page_in_mem = 0;
+  np->page_swap_count = 0;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);

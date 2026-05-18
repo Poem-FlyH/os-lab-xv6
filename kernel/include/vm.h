@@ -39,5 +39,14 @@ pte_t*          walk(pagetable_t pagetable, uint64 va, int alloc);
 #define PROT_EXEC   0x4 
 #define MAP_PRIVATE  0x1
 #define MAP_ANONYMOUS 0x2
-
+// Part6 新增
+struct proc;
+struct VMA;
+struct VMA_page;
+void            mock_swap_init(void);
+int             alloc_global_swap_slot(int pid, uint64 vaddr);
+void            free_global_swap_slot(int idx);
+struct VMA_page* addr2page(struct VMA *head, uint64 addr);
+int             swap_out(struct proc *p, struct VMA_page *page);
+int             swap_in(struct proc *p, struct VMA_page *page);
 #endif 

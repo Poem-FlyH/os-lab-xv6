@@ -154,3 +154,37 @@ sys_trace(void)
   myproc()->tmask = mask;
   return 0;
 }
+uint64
+sys_set_max_page_in_mem(void)
+{
+  int n;
+  if(argint(0, &n) < 0 || n < 1)
+    return -1;
+  myproc()->max_page_in_mem = n;
+  return 0;
+}
+
+uint64
+sys_get_swap_count(void)
+{
+  return myproc()->page_swap_count;
+}
+
+uint64
+sys_lru_access_notify(void)
+{
+  uint64 va;
+  if(argaddr(0, &va) < 0)
+    return -1;
+  struct proc *p = myproc();
+  struct VMA *vma;
+  for(vma = p->head.vm_next; vma != &p->head; vma = vma->vm_next)
+    if(va >= vma->vm_start && va < vma->vm_end) break;
+  if(vma == &p->head)
+    return -1;
+  int idx = (PGROUNDDOWN(va) - vma->vm_start) / PGSIZE;
+  acquire(&tickslock);
+  vma->pages[idx].last_access_time = ticks;
+  release(&tickslock);
+  return 0;
+}

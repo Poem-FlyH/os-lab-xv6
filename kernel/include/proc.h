@@ -11,12 +11,27 @@
 
 #define MAX_VMA 16  // 每个进程最多16个映射区域
 
+// 页面状态
+#define VPAGE_UNUSED  0   // 从未分配
+#define VPAGE_INMEM   1   // 在内存中
+#define VPAGE_SWAPPED 2   // 已换出
+
+// 单个mmap页面的追踪信息
+struct VMA_page {
+  int    status;         // 页面状态
+  uint64 vaddr;          // 该页虚拟地址
+  int    swap_slot_idx;  // 换出时对应的slot编号，-1表示无
+  uint64 last_in_mem_time;   // 进入内存的时间（FIFO用）
+  uint64 last_access_time;   // 最后访问时间（LRU用）
+};
+
 struct VMA {
   uint64 vm_start;
   uint64 vm_end;
   int prot;
   int flags;
   uint64 vm_off;
+  struct VMA_page pages[10]; // 最多追踪10个页面
   struct VMA *vm_next, *vm_prev;
 };
 
@@ -74,8 +89,12 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct dirent *cwd;          // Current directory
   char name[16];               // Process name (debugging)
-  int tmask;                    // trace mask
+  int tmask;
   struct VMA head;
+  // Part6 新增
+  int max_page_in_mem;     // mmap区允许的最大驻留页数
+  int cur_page_in_mem;     // 当前实际驻留页数
+  int page_swap_count;     // 累计换出次数
 };
 
 void            reg_info(void);

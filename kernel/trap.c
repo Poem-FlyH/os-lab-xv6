@@ -50,6 +50,25 @@ trapinithart(void)
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
 //
+// 选择换出的受害者页面（FIFO：选进入内存最早的）
+struct VMA_page* select_victim_page(struct VMA *head) {
+  struct VMA *v;
+  struct VMA_page *victim = 0;
+  uint64 oldest_time = (uint64)-1;
+
+  for(v = head->vm_next; v != head; v = v->vm_next) {
+    int npages = (v->vm_end - v->vm_start) / PGSIZE;
+    for(int i = 0; i < npages && i < 10; i++) {
+      if(v->pages[i].status == VPAGE_INMEM) {
+        if(v->pages[i].last_in_mem_time < oldest_time) {
+          oldest_time = v->pages[i].last_in_mem_time;
+          victim = &v->pages[i];
+        }
+      }
+    }
+  }
+  return victim;
+}
 void
 usertrap(void)
 {
@@ -87,37 +106,73 @@ usertrap(void)
     uint64 va = r_stval();
     struct proc *p = myproc();
     va = PGROUNDDOWN(va);
+
+    // 1. 找到触发缺页的VMA
     struct VMA *vma;
     for(vma = p->head.vm_next; vma != &p->head; vma = vma->vm_next)
       if(va >= vma->vm_start && va < vma->vm_end) break;
-    if(vma==&p->head) 
-    {
-      p->killed = 1; 
-      exit(-1);
-    }
-    char *mem;
-    if((mem = kalloc()) == 0)
-    {
+    if(vma == &p->head) {
       p->killed = 1;
       exit(-1);
     }
-    memset(mem, 0, PGSIZE);
-    uint64 pa = (uint64)mem;
 
-    int perm = PTE_U;
-    if (vma->prot & PROT_READ) perm |= PTE_R;
-    if(vma->prot & PROT_WRITE) perm |= PTE_W;
-    if(vma->prot & PROT_EXEC) perm |= PTE_X;
-    if(mappages(p->pagetable, va, PGSIZE, pa, perm) != 0)
-    {
-      kfree(mem); 
+    // 2. 找到对应的页面追踪信息
+    struct VMA_page *page = addr2page(&p->head, va);
+    if(page == 0) {
+      p->killed = 1;
       exit(-1);
     }
-    if(mappages(p->kpagetable, va, PGSIZE, pa, perm & ~PTE_U) != 0)
-    {
-      vmunmap(p->pagetable, va, 1, 0);
-      kfree(mem); 
-      exit(-1);
+
+    // 3. 如果已在内存中，无需处理
+    if(page->status == VPAGE_INMEM) {
+      // do nothing
+    }
+    else {
+      // 4. 检查是否超出驻留页上限，超出则换出一个
+      if(p->max_page_in_mem > 0 && p->cur_page_in_mem >= p->max_page_in_mem) {
+        struct VMA_page *victim = select_victim_page(&p->head);
+        if(victim == 0 || swap_out(p, victim) < 0) {
+          p->killed = 1;
+          exit(-1);
+        }
+      }
+
+      // 5. 判断是换入还是首次分配
+      if(page->status == VPAGE_SWAPPED) {
+        // 从交换区换入
+        if(swap_in(p, page) < 0) {
+          p->killed = 1;
+          exit(-1);
+        }
+      } else {
+        // 首次访问，分配新物理页
+        char *mem = kalloc();
+        if(mem == 0) {
+          p->killed = 1;
+          exit(-1);
+        }
+        memset(mem, 0, PGSIZE);
+        int perm = PTE_U;
+        if(vma->prot & PROT_READ)  perm |= PTE_R;
+        if(vma->prot & PROT_WRITE) perm |= PTE_W;
+        if(vma->prot & PROT_EXEC)  perm |= PTE_X;
+        if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, perm) != 0) {
+          kfree(mem);
+          exit(-1);
+        }
+        if(mappages(p->kpagetable, va, PGSIZE, (uint64)mem, perm & ~PTE_U) != 0) {
+          vmunmap(p->pagetable, va, 1, 1);
+          exit(-1);
+        }
+        // 更新页面追踪信息
+        page->status = VPAGE_INMEM;
+        page->swap_slot_idx = -1;
+        acquire(&tickslock);
+        page->last_in_mem_time = ticks;
+        page->last_access_time = ticks;
+        release(&tickslock);
+        p->cur_page_in_mem++;
+      }
     }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);

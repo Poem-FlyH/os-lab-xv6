@@ -9,7 +9,8 @@
 #include "include/proc.h"
 #include "include/printf.h"
 #include "include/string.h"
-
+extern uint ticks;
+extern struct spinlock tickslock;
 /*
  * the kernel's page table.
  */
@@ -670,7 +671,17 @@ uint64 mymmap(int fd, uint64 addr, uint64 len, int prot, int flags, uint64 offse
   vma->prot = prot;
   vma->flags = flags;
   vma->vm_off = offset;
-  
+
+  // 初始化页面追踪信息
+  int npages = (int)(len / PGSIZE);
+  for(int i = 0; i < npages && i < 10; i++) {
+    vma->pages[i].status = VPAGE_UNUSED;
+    vma->pages[i].vaddr = vma->vm_start + i * PGSIZE;
+    vma->pages[i].swap_slot_idx = -1;
+    vma->pages[i].last_in_mem_time = 0;
+    vma->pages[i].last_access_time = 0;
+  }
+
   //link
   struct VMA *cnt;
   for(cnt = p->head.vm_next; cnt != &p->head; cnt = cnt->vm_next)
@@ -729,5 +740,119 @@ uint64 sys_munmap()
     vma->vm_prev->vm_next = vma->vm_next;
     freeshare(vma);
   }
+  return 0;
+}
+// ========== Part6: 全局模拟交换区 ==========
+
+#define MAX_SWAP_SLOTS 16
+
+struct swap_slot {
+  int    used;
+  int    pid;
+  uint64 vaddr;
+  char   data[PGSIZE];
+};
+
+struct {
+  struct spinlock lock;
+  struct swap_slot slot[MAX_SWAP_SLOTS];
+} mock_swap;
+
+void mock_swap_init(void) {
+  initlock(&mock_swap.lock, "mock_swap");
+  for(int i = 0; i < MAX_SWAP_SLOTS; i++) {
+    mock_swap.slot[i].used = 0;
+    mock_swap.slot[i].pid = -1;
+    mock_swap.slot[i].vaddr = 0;
+    memset(mock_swap.slot[i].data, 0, PGSIZE);
+  }
+}
+
+int alloc_global_swap_slot(int pid, uint64 vaddr) {
+  acquire(&mock_swap.lock);
+  for(int i = 0; i < MAX_SWAP_SLOTS; i++) {
+    if(!mock_swap.slot[i].used) {
+      mock_swap.slot[i].used = 1;
+      mock_swap.slot[i].pid = pid;
+      mock_swap.slot[i].vaddr = vaddr;
+      release(&mock_swap.lock);
+      return i;
+    }
+  }
+  release(&mock_swap.lock);
+  return -1;
+}
+
+void free_global_swap_slot(int idx) {
+  acquire(&mock_swap.lock);
+  if(idx >= 0 && idx < MAX_SWAP_SLOTS) {
+    mock_swap.slot[idx].used = 0;
+    mock_swap.slot[idx].pid = -1;
+    mock_swap.slot[idx].vaddr = 0;
+    memset(mock_swap.slot[idx].data, 0, PGSIZE);
+  }
+  release(&mock_swap.lock);
+}
+
+// 根据虚拟地址找到对应的VMA_page
+struct VMA_page* addr2page(struct VMA *head, uint64 addr) {
+  struct VMA *vma;
+  for(vma = head->vm_next; vma != head; vma = vma->vm_next) {
+    if(addr >= vma->vm_start && addr < vma->vm_end) {
+      return &vma->pages[(addr - vma->vm_start) / PGSIZE];
+    }
+  }
+  return 0;
+}
+
+// 换出：把内存中的页复制到交换区，解除映射
+int swap_out(struct proc *p, struct VMA_page *page) {
+  int idx = alloc_global_swap_slot(p->pid, page->vaddr);
+  if(idx < 0) return -1;
+
+  pte_t *pte = walk(p->pagetable, page->vaddr, 0);
+  if(pte == 0 || (*pte & PTE_V) == 0) return -1;
+
+  uint64 pa = PTE2PA(*pte);
+  memmove(mock_swap.slot[idx].data, (char*)pa, PGSIZE);
+
+  if(walk(p->kpagetable, page->vaddr, 0) != 0)
+    vmunmap(p->kpagetable, page->vaddr, 1, 0);
+  vmunmap(p->pagetable, page->vaddr, 1, 1);
+
+  page->status = VPAGE_SWAPPED;
+  page->swap_slot_idx = idx;
+  p->cur_page_in_mem--;
+  p->page_swap_count++;
+  return 0;
+}
+
+// 换入：把交换区的数据复制回物理内存，重新建立映射
+int swap_in(struct proc *p, struct VMA_page *page) {
+  if(page->swap_slot_idx < 0 || page->swap_slot_idx >= MAX_SWAP_SLOTS)
+    return -1;
+
+  char *mem = kalloc();
+  if(mem == 0) return -1;
+
+  memmove(mem, mock_swap.slot[page->swap_slot_idx].data, PGSIZE);
+
+  if(mappages(p->pagetable, page->vaddr, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_U) != 0) {
+    kfree(mem);
+    return -1;
+  }
+  if(mappages(p->kpagetable, page->vaddr, PGSIZE, (uint64)mem, PTE_W|PTE_R) != 0) {
+    vmunmap(p->pagetable, page->vaddr, 1, 1);
+    return -1;
+  }
+
+  free_global_swap_slot(page->swap_slot_idx);
+  page->status = VPAGE_INMEM;
+  page->swap_slot_idx = -1;
+  acquire(&tickslock);
+  page->last_in_mem_time = ticks;   // 换入时重置进入内存的时间
+  page->last_access_time = ticks;
+  release(&tickslock);
+  p->cur_page_in_mem++;
   return 0;
 }

@@ -21,6 +21,7 @@
 #include "include/fpioa.h"
 #include "include/dmac.h"
 #endif
+extern void mock_swap_init(void);
 
 static inline void inithartid(unsigned long hartid) {
   asm volatile("mv tp, %0" : : "r" (hartid & 0x1));
@@ -46,6 +47,7 @@ main(unsigned long hartid, unsigned long dtb_pa)
     timerinit();     // init a lock for timer
     trapinithart();  // install kernel trap vector, including interrupt handler
     procinit();
+    mock_swap_init();
     plicinit();
     plicinithart();
     #ifndef QEMU
