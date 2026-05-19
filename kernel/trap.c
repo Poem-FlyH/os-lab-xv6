@@ -60,8 +60,8 @@ struct VMA_page* select_victim_page(struct VMA *head) {
     int npages = (v->vm_end - v->vm_start) / PGSIZE;
     for(int i = 0; i < npages && i < 10; i++) {
       if(v->pages[i].status == VPAGE_INMEM) {
-        if(v->pages[i].last_in_mem_time < oldest_time) {
-          oldest_time = v->pages[i].last_in_mem_time;
+        if(v->pages[i].last_access_time < oldest_time) {
+          oldest_time = v->pages[i].last_access_time;
           victim = &v->pages[i];
         }
       }
