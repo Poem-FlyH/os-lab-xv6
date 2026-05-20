@@ -36,7 +36,7 @@ main:
 	call	dup@plt
 	li	s0,0
 	lla	s3,.LC0
-	li	s2,15
+	li	s2,34
 .L5:
 	mv	a0,s3
 	call	printf@plt
@@ -128,6 +128,63 @@ main:
 	.align	3
 .LC18:
 	.string	"uname"
+	.align	3
+.LC19:
+	.string	"open"
+	.align	3
+.LC20:
+	.string	"openat"
+	.align	3
+.LC21:
+	.string	"brk"
+	.align	3
+.LC22:
+	.string	"mmap"
+	.align	3
+.LC23:
+	.string	"munmap"
+	.align	3
+.LC24:
+	.string	"/dup"
+	.align	3
+.LC25:
+	.string	"/dup2"
+	.align	3
+.LC26:
+	.string	"/pipe"
+	.align	3
+.LC27:
+	.string	"/open"
+	.align	3
+.LC28:
+	.string	"/openat"
+	.align	3
+.LC29:
+	.string	"/close"
+	.align	3
+.LC30:
+	.string	"/getdents"
+	.align	3
+.LC31:
+	.string	"/read"
+	.align	3
+.LC32:
+	.string	"/mkdir_"
+	.align	3
+.LC33:
+	.string	"/chdir"
+	.align	3
+.LC34:
+	.string	"/unlink"
+	.align	3
+.LC35:
+	.string	"/mount"
+	.align	3
+.LC36:
+	.string	"/umount"
+	.align	3
+.LC37:
+	.string	"/fstat"
 	.globl	argv
 	.bss
 	.align	3
@@ -139,7 +196,7 @@ argv:
 	.align	3
 	.set	.LANCHOR0,. + 0
 	.type	tests, @object
-	.size	tests, 120
+	.size	tests, 272
 tests:
 	.dword	.LC4
 	.dword	.LC5
@@ -156,5 +213,24 @@ tests:
 	.dword	.LC16
 	.dword	.LC17
 	.dword	.LC18
+	.dword	.LC19
+	.dword	.LC20
+	.dword	.LC21
+	.dword	.LC22
+	.dword	.LC23
+	.dword	.LC24
+	.dword	.LC25
+	.dword	.LC26
+	.dword	.LC27
+	.dword	.LC28
+	.dword	.LC29
+	.dword	.LC30
+	.dword	.LC31
+	.dword	.LC32
+	.dword	.LC33
+	.dword	.LC34
+	.dword	.LC35
+	.dword	.LC36
+	.dword	.LC37
 	.ident	"GCC: (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0"
 	.section	.note.GNU-stack,"",@progbits
