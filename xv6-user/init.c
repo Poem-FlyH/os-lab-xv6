@@ -28,7 +28,21 @@ char* tests[] = {
   "openat",
   "brk",
   "mmap",
-  "munmap"
+  "munmap",
+  "/dup",
+  "/dup2",
+  "/pipe",
+  "/open",
+  "/openat",
+  "/close",
+  "/getdents",
+  "/read",
+  "/mkdir_",
+  "/chdir",
+  "/unlink",
+  "/mount",
+  "/umount",
+  "/fstat",
 };
 int
 main(void)

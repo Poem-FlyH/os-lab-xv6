@@ -18,9 +18,10 @@
 #include "include/fat32.h"
 #include "include/syscall.h"
 #include "include/string.h"
+
 #include "include/printf.h"
 #include "include/vm.h"
-
+struct mount mounts[NMOUNT];
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -668,4 +669,267 @@ uint64 sys_openat(void) {
 
     eunlock(node);
     return out_fd;
+}
+uint64
+sys_dup3(void)
+{
+  int ofd, nfd;
+  struct file *f;
+  struct proc *p = myproc();
+
+  if(argint(0, &ofd) < 0 || argfd(0, 0, &f) < 0)
+    return -1;
+  if(argint(1, &nfd) < 0)
+    return -1;
+  if(nfd < 0 || nfd >= NOFILE || nfd == ofd)
+    return -1;
+
+  if(p->ofile[nfd])
+    fileclose(p->ofile[nfd]);
+
+  filedup(f);
+  p->ofile[nfd] = f;
+  return nfd;
+}
+
+uint64
+sys_pipe2(void)
+{
+  uint64 fdarray;
+  int flags;
+  struct file *rf, *wf;
+  int fd0, fd1;
+  struct proc *p = myproc();
+
+  if(argaddr(0, &fdarray) < 0 || argint(1, &flags) < 0)
+    return -1;
+  if(pipealloc(&rf, &wf) < 0)
+    return -1;
+  fd0 = -1;
+  if((fd0 = fdalloc(rf)) < 0 || (fd1 = fdalloc(wf)) < 0){
+    if(fd0 >= 0)
+      p->ofile[fd0] = 0;
+    fileclose(rf);
+    fileclose(wf);
+    return -1;
+  }
+  if(copyout2(fdarray, (char*)&fd0, sizeof(fd0)) < 0 ||
+     copyout2(fdarray+sizeof(fd0), (char*)&fd1, sizeof(fd1)) < 0){
+    p->ofile[fd0] = 0;
+    p->ofile[fd1] = 0;
+    fileclose(rf);
+    fileclose(wf);
+    return -1;
+  }
+  return 0;
+}
+uint64
+sys_getdents(void)
+{
+  int fd, len;
+  uint64 addr;
+  struct file *f;
+  int nread = 0;
+  int reclen = (int)sizeof(struct dirent64);
+
+  if(argfd(0, &fd, &f) < 0 || argaddr(1, &addr) < 0 || argint(2, &len) < 0)
+    return -1;
+
+  if(len < reclen)
+    return 0;
+
+  if(f->readable == 0)
+    return -1;
+
+  if(f->ep == 0 || !(f->ep->attribute & ATTR_DIRECTORY))
+    return -1;
+
+  while(nread + reclen <= len){
+    struct dirent de;
+    int count = 0;
+    int ret;
+
+    elock(f->ep);
+    ret = enext(f->ep, &de, f->off, &count);
+    eunlock(f->ep);
+
+    if(ret == -1)
+      break;
+
+    f->off += count * 32;
+
+    struct dirent64 out;
+    out.d_ino = 0;
+    out.d_off = f->off;
+    out.d_reclen = sizeof(struct dirent64);
+    out.d_type = (de.attribute & ATTR_DIRECTORY) ? DT_DIR : DT_REG;
+    safestrcpy(out.d_name, de.filename, FAT32_MAX_FILENAME + 1);
+
+    if(copyout2(addr, (char*)&out, sizeof(out)) < 0)
+      return -1;
+
+    addr += sizeof(out);
+    nread += sizeof(out);
+  }
+
+  return nread;
+}
+uint64
+sys_mkdirat(void)
+{
+  char path[FAT32_MAX_PATH];
+  int dirfd, mode;
+  struct dirent *ep;
+
+  if(argint(0, &dirfd) < 0 ||
+     argstr(1, path, FAT32_MAX_PATH) < 0 ||
+     argint(2, &mode) < 0)
+    return -1;
+
+  if(strlen(path) == 0)
+    return -1;
+
+  if(resolve_path(dirfd, path) < 0)
+    return -1;
+
+  ep = create(path, T_DIR, 0);
+  if(ep == 0)
+    return -1;
+
+  eunlock(ep);
+  eput(ep);
+  return 0;
+}
+uint64
+sys_unlinkat(void)
+{
+  char path[FAT32_MAX_PATH];
+  int dirfd, flags;
+  struct dirent *ep;
+
+  if(argint(0, &dirfd) < 0 ||
+     argstr(1, path, FAT32_MAX_PATH) < 0 ||
+     argint(2, &flags) < 0)
+    return -1;
+
+  if(strlen(path) == 0)
+    return -1;
+
+  if(resolve_path(dirfd, path) < 0)
+    return -1;
+
+  // 找到路径最后一段，禁止删除 . 和 ..
+  char *base = path;
+  for(char *q = path; *q; q++)
+    if(*q == '/') base = q + 1;
+  if(strncmp(base, ".", 2) == 0 || strncmp(base, "..", 3) == 0)
+    return -1;
+
+  ep = ename(path);
+  if(ep == 0)
+    return -1;
+
+  elock(ep);
+
+  if(ep->attribute & ATTR_DIRECTORY){
+    if(!(flags & AT_REMOVEDIR)){
+      eunlock(ep);
+      eput(ep);
+      return -1;
+    }
+    if(!isdirempty(ep)){
+      eunlock(ep);
+      eput(ep);
+      return -1;
+    }
+  } else {
+    if(flags & AT_REMOVEDIR){
+      eunlock(ep);
+      eput(ep);
+      return -1;
+    }
+  }
+
+  elock(ep->parent);
+  eremove(ep);
+  eunlock(ep->parent);
+  eunlock(ep);
+  eput(ep);
+  return 0;
+}
+uint64
+sys_mount(void)
+{
+  char src[FAT32_MAX_PATH];
+  char dst[FAT32_MAX_PATH];
+  char fstype[32];
+  int flags;
+  uint64 data;
+
+  if(argstr(0, src, FAT32_MAX_PATH) < 0 ||
+     argstr(1, dst, FAT32_MAX_PATH) < 0 ||
+     argstr(2, fstype, sizeof(fstype)) < 0 ||
+     argint(3, &flags) < 0 ||
+     argaddr(4, &data) < 0)
+    return -1;
+
+  if(resolve_path(AT_FDCWD, dst) < 0)
+    return -1;
+
+  struct dirent *ep = ename(dst);
+  if(ep == 0)
+    return -1;
+
+  elock(ep);
+  if(!(ep->attribute & ATTR_DIRECTORY)){
+    eunlock(ep);
+    eput(ep);
+    return -1;
+  }
+
+  int idx = -1;
+  for(int i = 0; i < NMOUNT; i++){
+    if(!mounts[i].used){
+      idx = i;
+      break;
+    }
+  }
+  if(idx == -1){
+    eunlock(ep);
+    eput(ep);
+    return -1;
+  }
+
+  mounts[idx].de = edup(ep);
+  mounts[idx].used = 1;
+  safestrcpy(mounts[idx].path, dst, FAT32_MAX_PATH);
+  eunlock(ep);
+  eput(ep);
+  return 0;
+}
+
+uint64
+sys_umount(void)
+{
+  char path[FAT32_MAX_PATH];
+  int flags;
+
+  if(argstr(0, path, FAT32_MAX_PATH) < 0 ||
+     argint(1, &flags) < 0)
+    return -1;
+
+  if(resolve_path(AT_FDCWD, path) < 0)
+    return -1;
+
+  int idx = find_mount(path);
+  if(idx < 0)
+    return -1;
+
+  if(mounts[idx].de)
+    eput(mounts[idx].de);
+
+  mounts[idx].de = 0;
+  mounts[idx].used = 0;
+  safestrcpy(mounts[idx].path, "", FAT32_MAX_PATH);
+  return 0;
 }

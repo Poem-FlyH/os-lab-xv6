@@ -21,6 +21,16 @@
 
 #define FAT32_MAX_FILENAME  255
 #define FAT32_MAX_PATH      260
+#define DT_DIR  4
+#define DT_REG  8
+
+struct dirent64 {
+  uint64 d_ino;
+  uint64 d_off;
+  unsigned short d_reclen;
+  unsigned char d_type;
+  char d_name[FAT32_MAX_FILENAME + 1];
+};
 #define ENTRY_CACHE_NUM     50
 
 struct dirent {
@@ -69,4 +79,14 @@ struct dirent*  enameparent(char *path, char *name);
 int             eread(struct dirent *entry, int user_dst, uint64 dst, uint off, uint n);
 int             ewrite(struct dirent *entry, int user_src, uint64 src, uint off, uint n);
 
+#define NMOUNT 16
+
+struct mount {
+  struct dirent *de;
+  char path[FAT32_MAX_PATH];
+  int used;
+};
+
+int is_mounted(const struct dirent *de);
+int find_mount(const char *path);
 #endif

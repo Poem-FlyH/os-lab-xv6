@@ -933,3 +933,19 @@ struct dirent *enameparent(char *path, char *name)
 {
     return lookup_path(path, 1, name);
 }
+
+int is_mounted(const struct dirent *de) {
+  extern struct mount mounts[NMOUNT];
+  for(int i = 0; i < NMOUNT; i++)
+    if(mounts[i].used && mounts[i].de == de)
+      return 1;
+  return 0;
+}
+
+int find_mount(const char *path) {
+  extern struct mount mounts[NMOUNT];
+  for(int i = 0; i < NMOUNT; i++)
+    if(mounts[i].used && strncmp(mounts[i].path, path, FAT32_MAX_PATH) == 0)
+      return i;
+  return -1;
+}

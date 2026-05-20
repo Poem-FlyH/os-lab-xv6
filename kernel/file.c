@@ -92,27 +92,52 @@ fileclose(struct file *f)
 
   }
 }
-
+void
+ekstat(struct dirent *de, struct kstat *st)
+{
+  memset(st, 0, sizeof(*st));
+  st->st_dev = de->dev;
+  st->st_ino = 0;
+  st->st_mode = (de->attribute & ATTR_DIRECTORY) ? DT_DIR : DT_REG;
+  st->st_nlink = 1;
+  st->st_rdev = 0;
+  st->st_size = de->file_size;
+  st->st_blksize = 4096;
+  st->st_blocks = (st->st_size + 511) / 512;
+}
 // Get metadata about file f.
 // addr is a user virtual address, pointing to a struct stat.
+// int
+// filestat(struct file *f, uint64 addr)
+// {
+//   // struct proc *p = myproc();
+//   struct stat st;
+  
+//   if(f->type == FD_ENTRY){
+//     elock(f->ep);
+//     estat(f->ep, &st);
+//     eunlock(f->ep);
+//     // if(copyout(p->pagetable, addr, (char *)&st, sizeof(st)) < 0)
+//     if(copyout2(addr, (char *)&st, sizeof(st)) < 0)
+//       return -1;
+//     return 0;
+//   }
+//   return -1;
+// }
 int
 filestat(struct file *f, uint64 addr)
 {
-  // struct proc *p = myproc();
-  struct stat st;
-  
+  struct kstat st;
   if(f->type == FD_ENTRY){
     elock(f->ep);
-    estat(f->ep, &st);
+    ekstat(f->ep, &st);
     eunlock(f->ep);
-    // if(copyout(p->pagetable, addr, (char *)&st, sizeof(st)) < 0)
     if(copyout2(addr, (char *)&st, sizeof(st)) < 0)
       return -1;
     return 0;
   }
   return -1;
 }
-
 // Read from file f.
 // addr is a user virtual address.
 int

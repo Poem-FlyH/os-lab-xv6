@@ -42,5 +42,12 @@
 #define SYS_execve      221
 #define SYS_munmap     215   
 #define SYS_mmap       222 
+#define SYS_dup3        24
+#define SYS_pipe2       59
+#define SYS_getdents64  61
+#define SYS_mkdirat     34
+#define SYS_unlinkat    35
+#define SYS_mount       40
+#define SYS_umount2     39
 
 #endif
