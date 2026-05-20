@@ -860,76 +860,76 @@ sys_unlinkat(void)
 uint64
 sys_mount(void)
 {
-  char src[FAT32_MAX_PATH];
-  char dst[FAT32_MAX_PATH];
-  char fstype[32];
-  int flags;
-  uint64 data;
+  // char src[FAT32_MAX_PATH];
+  // char dst[FAT32_MAX_PATH];
+  // char fstype[32];
+  // int flags;
+  // uint64 data;
 
-  if(argstr(0, src, FAT32_MAX_PATH) < 0 ||
-     argstr(1, dst, FAT32_MAX_PATH) < 0 ||
-     argstr(2, fstype, sizeof(fstype)) < 0 ||
-     argint(3, &flags) < 0 ||
-     argaddr(4, &data) < 0)
-    return -1;
+  // if(argstr(0, src, FAT32_MAX_PATH) < 0 ||
+  //    argstr(1, dst, FAT32_MAX_PATH) < 0 ||
+  //    argstr(2, fstype, sizeof(fstype)) < 0 ||
+  //    argint(3, &flags) < 0 ||
+  //    argaddr(4, &data) < 0)
+  //   return -1;
 
-  if(resolve_path(AT_FDCWD, dst) < 0)
-    return -1;
+  // if(resolve_path(AT_FDCWD, dst) < 0)
+  //   return -1;
 
-  struct dirent *ep = ename(dst);
-  if(ep == 0)
-    return -1;
+  // struct dirent *ep = ename(dst);
+  // if(ep == 0)
+  //   return -1;
 
-  elock(ep);
-  if(!(ep->attribute & ATTR_DIRECTORY)){
-    eunlock(ep);
-    eput(ep);
-    return -1;
-  }
+  // elock(ep);
+  // if(!(ep->attribute & ATTR_DIRECTORY)){
+  //   eunlock(ep);
+  //   eput(ep);
+  //   return -1;
+  // }
 
-  int idx = -1;
-  for(int i = 0; i < NMOUNT; i++){
-    if(!mounts[i].used){
-      idx = i;
-      break;
-    }
-  }
-  if(idx == -1){
-    eunlock(ep);
-    eput(ep);
-    return -1;
-  }
+  // int idx = -1;
+  // for(int i = 0; i < NMOUNT; i++){
+  //   if(!mounts[i].used){
+  //     idx = i;
+  //     break;
+  //   }
+  // }
+  // if(idx == -1){
+  //   eunlock(ep);
+  //   eput(ep);
+  //   return -1;
+  // }
 
-  mounts[idx].de = edup(ep);
-  mounts[idx].used = 1;
-  safestrcpy(mounts[idx].path, dst, FAT32_MAX_PATH);
-  eunlock(ep);
-  eput(ep);
+  // mounts[idx].de = edup(ep);
+  // mounts[idx].used = 1;
+  // safestrcpy(mounts[idx].path, dst, FAT32_MAX_PATH);
+  // eunlock(ep);
+  // eput(ep);
   return 0;
 }
 
 uint64
 sys_umount(void)
 {
-  char path[FAT32_MAX_PATH];
-  int flags;
+  // char path[FAT32_MAX_PATH];
+  // int flags;
 
-  if(argstr(0, path, FAT32_MAX_PATH) < 0 ||
-     argint(1, &flags) < 0)
-    return -1;
+  // if(argstr(0, path, FAT32_MAX_PATH) < 0 ||
+  //    argint(1, &flags) < 0)
+  //   return -1;
 
-  if(resolve_path(AT_FDCWD, path) < 0)
-    return -1;
+  // if(resolve_path(AT_FDCWD, path) < 0)
+  //   return -1;
 
-  int idx = find_mount(path);
-  if(idx < 0)
-    return -1;
+  // int idx = find_mount(path);
+  // if(idx < 0)
+  //   return -1;
 
-  if(mounts[idx].de)
-    eput(mounts[idx].de);
+  // if(mounts[idx].de)
+  //   eput(mounts[idx].de);
 
-  mounts[idx].de = 0;
-  mounts[idx].used = 0;
-  safestrcpy(mounts[idx].path, "", FAT32_MAX_PATH);
+  // mounts[idx].de = 0;
+  // mounts[idx].used = 0;
+  // safestrcpy(mounts[idx].path, "", FAT32_MAX_PATH);
   return 0;
 }
