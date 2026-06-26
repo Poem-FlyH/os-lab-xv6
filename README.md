@@ -1,122 +1,35 @@
-# XV6-RISCV On K210
-Run xv6-riscv on k210 board  
-[English](./README.md) | [中文](./README_cn.md)   
+# 💻 Peking University OS Labs - Part 4: Process Scheduling (MLFQ Only)
 
-```
- (`-')           (`-')                   <-.(`-')                            
- (OO )_.->      _(OO )                    __( OO)                            
- (_| \_)--.,--.(_/,-.\  ,--.    (`-')    '-'. ,--.  .----.   .--.   .----.   
- \  `.'  / \   \ / (_/ /  .'    ( OO).-> |  .'   / \_,-.  | /_  |  /  ..  \  
-  \    .')  \   /   / .  / -.  (,------. |      /)    .' .'  |  | |  /  \  . 
-  .'    \  _ \     /_)'  .-. \  `------' |  .   '   .'  /_   |  | '  \  /  ' 
- /  .'.  \ \-'\   /   \  `-' /           |  |\   \ |      |  |  |  \  `'  /  
-`--'   '--'    `-'     `----'            `--' '--' `------'  `--'   `---''   
-```
+当前分支 (`sched`) 包含了本人在北京大学操作系统课程实验 **Part 4（进程调度算法实现）** 的最终代码。
 
-![run-k210](./img/xv6-k210_run.gif)  
+> 📌 **重要说明 (Read First)**
+> 本实验在开发过程中经历了时间片轮转（RR）、静态优先级（Priority）以及多级反馈队列（MLFQ）三个阶段。为了保证仓库主线的整洁与查阅的连贯性，**本分支不进行算法拆分，仅保留并展示包含了多级反馈队列（MLFQ）最终完整逻辑的“完全体”代码。**
 
-## Dependencies
-+ `k210 board` or `qemu-system-riscv64`
-+ RISC-V Toolchain: [riscv-gnu-toolchain](https://github.com/riscv/riscv-gnu-toolchain.git)
+## 🚀 核心实现与特性
 
-## Installation
-```bash
-git clone https://github.com/HUST-OS/xv6-k210
-```
+本分支通过重构底层的 `trap.c` 中断响应逻辑与 `proc.c` 中的 `scheduler()` 函数，实现了一套动态的 **多级反馈队列调度 (MLFQ)** 体系：
 
-## Run on k210 board
-First you need to connect your k210 board to your PC.  
-And check the `USB serial port` (In my situation it will be `ttyUSB0`):  
-```bash
-ls /dev/ | grep USB
-```
-Build the kernel and user program:
+* **动态优先级评估**：基于 25 次 `sleep` + `yield` 作为统计窗口，动态监控并评估进程的运行行为。
+* **CPU 密集型进程降级**：频繁被系统强占触发 `yield` 的进程（占比 $\ge$ 70%）会被自动降级（优先级数值增大），防止其长时间独占 CPU。
+* **I/O 密集型进程升级**：频繁主动阻塞触发 `sleep` 的进程（占比 $\ge$ 70%）会被自动升级（优先级数值减小），以保证高响应度。
+* **兼容性基础**：代码底层保留并融合了针对进程时间片（`timeslice`/`run_ticks`）的控制以及优先级扫描的基础结构，作为 MLFQ 决策的底层支撑。
 
-```bash
-cd xv6-k210
-make build
-```
-Instead of the original file system, xv6-k210 runs with FAT32. You might need an SD card with FAT32 format.  
-Your SD card should NOT keep a partition table. To start `shell` and other user programs, you need to copy them into your SD card.  
-First, connect and mount your SD card (SD card reader required).
-```bash
-ls /dev/ # To check your SD device
-mount <your SD device name> <mount point>
-make sdcard dst="SD card mount point"
-umount <mount point>
-```
-Then, insert the SD card to your k210 board and run:
-```bash
-make run
-```
-Sometimes you should change the `USB serial port`:  
-```bash
-make run k210-serialport=`Your-USB-port`(default by ttyUSB0)
-```
-Ps: Most of the k210-port in Linux is ttyUSB0, if you use Windows or Mac OS, this doc 
-may help you: [maixpy-doc](https://maixpy.sipeed.com/zh/get_started/env_install_driver.html#)  
+## 💡 避坑指南与底层细节 (Gotchas)
 
-## Run on qemu-system-riscv64
-First, make sure `qemu-system-riscv64` is installed on your system.  
-Second, make a disk image file with FAT32 file system.
-```bash
-make fs
-```
-It will generate a disk image file `fs.img`, and compile some user programs like `shell` then copy them into the `fs.img`.  
-As long as the `fs.img` exists, you don't need to do this every time before running, unless you want to update it.
+在实现复杂的 MLFQ 调度逻辑时，有几个关键的调试经验与 Bug 修复记录：
 
-Finally, start running.
-```bash
-make run platform=qemu
-```
+### 1. 警惕时钟中断与 RR 基础退化
+调度器的核心驱动力是时钟中断。在 `usertrap()` 和 `kerneltrap()` 中必须增加精确的 `run_ticks` 计数逻辑。只有当当前进程的时间片确实耗尽后才调用 `yield()`，否则底层的调度节奏会彻底紊乱，导致上层的 MLFQ 评估也跟着失效。
 
-Ps: Press Ctrl + A then X to quit qemu.
+### 2. 进程饿死与公平性处理
+在扫描就绪队列寻找高优先级进程时，如果每次都从头遍历并立即切换，会导致排在后面的同优先级进程永远无法获得 CPU。
+* **解决方案**：找到匹配进程并通过 `swtch` 切入、当该进程 `yield` 返回调度器后，循环必须自然**继续向下遍历**寻找下一个同优先级进程，而不是盲目重置回头部，从而在 MLFQ 的同级队列中保证了调度公平性。
 
-## About shell
+### 3. CPU 密集型进程优先级未下降的 Bug
+在早期测试中，发现 CPU 密集型进程的优先级数值没有如预期般升高（降级）。
+* **原因与修复**：原先忘记在 `yield()` 触发时显式调用动态优先级评估函数 `recalc_process_prio(p, 0)`，导致强占计数器始终为 0。另外，最初设置的统计窗口太大（50 次）导致评估滞后。将其调小至 **25 次**后，动态升降级效果完美体现。
 
-The shell commands are user programs, too. Those program should be put in a "/bin" directory in your SD card or the `fs.img`.  
-Now we support a few useful commands, such as `cd`, `ls`, `cat` and so on.
+## ✅ 测试情况
 
-In addition, `shell` supports some shortcut keys as below:
-
-- Ctrl-H -- backspace  
-- Ctrl-U -- kill a line  
-- Ctrl-D -- end of file (EOF)  
-- Ctrl-P -- print process list  
-
-## Add my programs on xv6-k210
-1. Make a new C source file in `xv6-user/` like `myprog.c`, and put your codes;
-2. You can include `user.h` to use the functions declared in it, such as `open`, `gets` and `printf`;
-3. Add a line "`$U/_myprog\`" in `Makefile` as below:
-    ```Makefile
-    UPROGS=\
-        $U/_init\
-        $U/_sh\
-        $U/_cat\
-        ...
-        $U/_myprog\      # Don't ignore the leading '_'
-    ```
-4. Then make:
-    ```bash
-    make userprogs
-    ```
-    Now you might see `_myprog` in `xv6-user/` if no error detected. Finally you need to copy it into your SD (see [here](#run-on-k210-board))
-     or FS image (see [here](#run-on-qemu-system-riscv64)).
-
-## Progress
-- [x] Multicore boot
-- [x] Bare-metal printf
-- [x] Memory alloc
-- [x] Page Table
-- [x] Timer interrupt
-- [x] S mode extern interrupt
-- [x] Receive uarths message
-- [x] SD card driver
-- [x] Process management
-- [x] File system
-- [x] User program
-- [X] Steady keyboard input(k210)
-
-## TODO
-Fix the bugs of U-mode exception on k210.
-
+本地 `oscomp` 测试套件的调度相关测试点已全部通过。在 MLFQ 测试中，I/O 密集型进程最早完成，CPU 密集型进程发生稳定降级并最后完成，输出顺序与预期完全一致：
+- `test_proc_mlfq`
