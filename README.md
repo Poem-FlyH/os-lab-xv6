@@ -1,20 +1,3 @@
-# xv6-k210 操作系统内核实现与扩展
-
-本项目基于 MIT xv6 教学内核，将其移植至 RISC-V64 架构，并将底层文件系统替换为 FAT32。在此基础上，进行了一系列操作系统核心子系统的渐进式开发与深度优化。
-
-## 📍 实验分支导航
-
-* **Part 1: System calls (syscall)**：initcode 64位适配与基础系统调用（shutdown, getcwd, times, uname）。
-* **Part 2: Process management (process)**：clone 线程机制、wait4 及内核时钟体系适配（硬件与系统 Tick 换算）。
-* **Part 3: Memory mapping (mmap)**：VMA 数据结构管理、mmap/munmap 及缺页懒分配。
-* **Part 4: Process scheduling (sched)**：Round-Robin 时间片轮转、自定义优先级调度与多级反馈队列 (MLFQ)。
-* **Part 5: Copy-on-write (cow)**：懒分配 (Lazy Allocation) 与写时复制 (COW) 的物理页共享及引用计数管理。
-* **Part 6: Page replacement (swap - 📍 当前关键分支)**：内存 Swap 区模拟与 FIFO / LRU 页面置换算法。
-* **Part 7: File system (fs)**：基于 FAT32 的进阶文件系统调用 (getdents64, dup3, pipe2 等)。
-* **Part 8: Semaphore (semaphore)**：内核级信号量 (P/V 操作) 实现、Mesa 语义规避虚假唤醒及哲学家就餐/生产者消费者问题。
-
----
-
 ## 🛠️ Part 6: 页面置换算法 (Page Replacement) 核心设计
 
 本阶段在 Part 3 内存懒分配与 VMA 的基础上，实现了**内存模拟 Swap 分区**以及 **FIFO（先进先出）**与 **LRU（最近最少使用）**两种页面置换算法。当进程 mmap 区域驻留的物理页数量超过设定上限时，内核将自动触发页面换出与换入流程。
