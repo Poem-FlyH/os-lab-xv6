@@ -1,122 +1,23 @@
-# XV6-RISCV On K210
-Run xv6-riscv on k210 board  
-[English](./README.md) | [中文](./README_cn.md)   
+# 💻 Peking University OS Labs - Part 5: Copy-On-Write (COW)
 
-```
- (`-')           (`-')                   <-.(`-')                            
- (OO )_.->      _(OO )                    __( OO)                            
- (_| \_)--.,--.(_/,-.\  ,--.    (`-')    '-'. ,--.  .----.   .--.   .----.   
- \  `.'  / \   \ / (_/ /  .'    ( OO).-> |  .'   / \_,-.  | /_  |  /  ..  \  
-  \    .')  \   /   / .  / -.  (,------. |      /)    .' .'  |  | |  /  \  . 
-  .'    \  _ \     /_)'  .-. \  `------' |  .   '   .'  /_   |  | '  \  /  ' 
- /  .'.  \ \-'\   /   \  `-' /           |  |\   \ |      |  |  |  \  `'  /  
-`--'   '--'    `-'     `----'            `--' '--' `------'  `--'   `---''   
-```
+当前分支 (`cow`) 包含了本人在北京大学操作系统课程实验 **Part 5（写时复制机制）** 的最终代码。
 
-![run-k210](./img/xv6-k210_run.gif)  
+本阶段的核心目标是打破传统 `fork()` 中极其低效的全量内存拷贝机制，通过深度操纵页表权限与页错误（Page Fault）异常，实现物理内存的高效共享与按需分配。
 
-## Dependencies
-+ `k210 board` or `qemu-system-riscv64`
-+ RISC-V Toolchain: [riscv-gnu-toolchain](https://github.com/riscv/riscv-gnu-toolchain.git)
+## 🚀 核心实现与特性
 
-## Installation
-```bash
-git clone https://github.com/HUST-OS/xv6-k210
-```
+本分支对底层的内存管理模块 (`kalloc.c`, `vm.c`) 及异常处理模块 (`trap.c`) 进行了大规模重构：
 
-## Run on k210 board
-First you need to connect your k210 board to your PC.  
-And check the `USB serial port` (In my situation it will be `ttyUSB0`):  
-```bash
-ls /dev/ | grep USB
-```
-Build the kernel and user program:
+* **引用计数器 (Reference Counting)**：在内核中引入了全局的物理页引用计数数组。每次物理页被映射时引用数加一，解除映射时减一。仅当引用数归零时，才真正调用 `kfree` 回收物理内存。
+* **零拷贝 `fork`**：重写了 `uvmcopy`。在创建子进程时不再分配新物理页，而是将父子进程的对应页表项 (PTE) 全部降级为**只读**（清除 `PTE_W`），并打上自定义的 `PTE_COW` 标志位用于溯源，极大降低了进程创建延迟。
+* **缺页异常接管**：在 `usertrap` 中捕获 scause 为 15（Store Page Fault）的写保护异常。当识别到用户尝试写入带有 `PTE_COW` 标记的页面时，内核接管执行流：动态分配新物理页 $\rightarrow$ 拷贝原数据 $\rightarrow$ 重新以可写权限映射 $\rightarrow$ 恢复用户态执行。
+* **内核态 COW 兼容**：同步修改了 `copyout` 函数。当内核态尝试向用户态的 COW 页面输出数据时（例如 `read` 系统调用读入缓冲区），也能主动触发写时复制逻辑，避免向只读页面强行写入引发 Kernel Panic。
 
-```bash
-cd xv6-k210
-make build
-```
-Instead of the original file system, xv6-k210 runs with FAT32. You might need an SD card with FAT32 format.  
-Your SD card should NOT keep a partition table. To start `shell` and other user programs, you need to copy them into your SD card.  
-First, connect and mount your SD card (SD card reader required).
-```bash
-ls /dev/ # To check your SD device
-mount <your SD device name> <mount point>
-make sdcard dst="SD card mount point"
-umount <mount point>
-```
-Then, insert the SD card to your k210 board and run:
-```bash
-make run
-```
-Sometimes you should change the `USB serial port`:  
-```bash
-make run k210-serialport=`Your-USB-port`(default by ttyUSB0)
-```
-Ps: Most of the k210-port in Linux is ttyUSB0, if you use Windows or Mac OS, this doc 
-may help you: [maixpy-doc](https://maixpy.sipeed.com/zh/get_started/env_install_driver.html#)  
+## 💡 避坑指南与底层细节 (Gotchas)
 
-## Run on qemu-system-riscv64
-First, make sure `qemu-system-riscv64` is installed on your system.  
-Second, make a disk image file with FAT32 file system.
-```bash
-make fs
-```
-It will generate a disk image file `fs.img`, and compile some user programs like `shell` then copy them into the `fs.img`.  
-As long as the `fs.img` exists, you don't need to do this every time before running, unless you want to update it.
+* **并发安全的引用计数**：由于多核 CPU 环境下的并发 `fork` 与 `exit`，对物理页引用计数的增减必须使用自旋锁 (`spinlock`) 严格保护。若操作不具备原子性，极易导致物理页被提前释放（内存破坏）或永久泄露。
+* **OOM (Out of Memory) 优雅降级**：在 COW 触发异常并尝试 `kalloc` 分配新页时，如果恰好系统物理内存已耗尽，内核必须极其谨慎地处理。正确的做法是杀死当前触发异常的进程（调用 `exit(-1)`），而不是引发整个操作系统的 Panic 崩溃。
 
-Finally, start running.
-```bash
-make run platform=qemu
-```
+## ✅ 测试情况
 
-Ps: Press Ctrl + A then X to quit qemu.
-
-## About shell
-
-The shell commands are user programs, too. Those program should be put in a "/bin" directory in your SD card or the `fs.img`.  
-Now we support a few useful commands, such as `cd`, `ls`, `cat` and so on.
-
-In addition, `shell` supports some shortcut keys as below:
-
-- Ctrl-H -- backspace  
-- Ctrl-U -- kill a line  
-- Ctrl-D -- end of file (EOF)  
-- Ctrl-P -- print process list  
-
-## Add my programs on xv6-k210
-1. Make a new C source file in `xv6-user/` like `myprog.c`, and put your codes;
-2. You can include `user.h` to use the functions declared in it, such as `open`, `gets` and `printf`;
-3. Add a line "`$U/_myprog\`" in `Makefile` as below:
-    ```Makefile
-    UPROGS=\
-        $U/_init\
-        $U/_sh\
-        $U/_cat\
-        ...
-        $U/_myprog\      # Don't ignore the leading '_'
-    ```
-4. Then make:
-    ```bash
-    make userprogs
-    ```
-    Now you might see `_myprog` in `xv6-user/` if no error detected. Finally you need to copy it into your SD (see [here](#run-on-k210-board))
-     or FS image (see [here](#run-on-qemu-system-riscv64)).
-
-## Progress
-- [x] Multicore boot
-- [x] Bare-metal printf
-- [x] Memory alloc
-- [x] Page Table
-- [x] Timer interrupt
-- [x] S mode extern interrupt
-- [x] Receive uarths message
-- [x] SD card driver
-- [x] Process management
-- [x] File system
-- [x] User program
-- [X] Steady keyboard input(k210)
-
-## TODO
-Fix the bugs of U-mode exception on k210.
-
+本地 `oscomp` 测试套件的 `cow` 测试点及综合压力测试已全部完美通过，未发生内存泄露。
