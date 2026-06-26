@@ -1,122 +1,41 @@
-# XV6-RISCV On K210
-Run xv6-riscv on k210 board  
-[English](./README.md) | [中文](./README_cn.md)   
+# 💻 Peking University OS Labs - Part 3: Memory Management
 
-```
- (`-')           (`-')                   <-.(`-')                            
- (OO )_.->      _(OO )                    __( OO)                            
- (_| \_)--.,--.(_/,-.\  ,--.    (`-')    '-'. ,--.  .----.   .--.   .----.   
- \  `.'  / \   \ / (_/ /  .'    ( OO).-> |  .'   / \_,-.  | /_  |  /  ..  \  
-  \    .')  \   /   / .  / -.  (,------. |      /)    .' .'  |  | |  /  \  . 
-  .'    \  _ \     /_)'  .-. \  `------' |  .   '   .'  /_   |  | '  \  /  ' 
- /  .'.  \ \-'\   /   \  `-' /           |  |\   \ |      |  |  |  \  `'  /  
-`--'   '--'    `-'     `----'            `--' '--' `------'  `--'   `---''   
-```
+当前分支 (`mmap`) 包含了本人在北京大学操作系统课程实验 **Part 3（内存管理系统调用实现）** 的最终代码。
 
-![run-k210](./img/xv6-k210_run.gif)  
+本阶段的核心目标是建立完备的虚拟内存区域（VMA）管理结构，实现文件映射与缺页驱动的懒分配（Lazy Allocation）机制，并顺带重构了底层的文件系统接口以支持绝对路径与相对路径的解析。
 
-## Dependencies
-+ `k210 board` or `qemu-system-riscv64`
-+ RISC-V Toolchain: [riscv-gnu-toolchain](https://github.com/riscv/riscv-gnu-toolchain.git)
+## 🚀 核心实现与特性
 
-## Installation
-```bash
-git clone https://github.com/HUST-OS/xv6-k210
-```
+本分支主要新增或重写了以下系统调用与底层机制：
 
-## Run on k210 board
-First you need to connect your k210 board to your PC.  
-And check the `USB serial port` (In my situation it will be `ttyUSB0`):  
-```bash
-ls /dev/ | grep USB
-```
-Build the kernel and user program:
+* **内存映射 (`SYS_mmap` - 222 / `SYS_munmap` - 215)**：引入了 `struct vma` 数组（单进程最多 16 个）来记录每一片映射区域的元信息（包含起止地址、权限、文件偏移等）。实现了基于缺页异常（Page Fault）的懒分配逻辑，以及 `munmap` 时的脏数据按需写回磁盘 (`vma_writeback`)。
+* **堆内存控制 (`SYS_brk` - 214)**：直接设置进程 program break（堆顶绝对地址），并复用 `growproc`，正确处理了 `brk(0)` 返回当前堆顶的语义要求。
+* **文件系统接口支持 (`SYS_openat` - 56)**：在原 `open` 调用的基础上增加了 `dirfd` 参数，实现了 `build_abs_path` 和 `resolve_path` 辅助函数以完成复杂的层级路径转换。
 
-```bash
-cd xv6-k210
-make build
-```
-Instead of the original file system, xv6-k210 runs with FAT32. You might need an SD card with FAT32 format.  
-Your SD card should NOT keep a partition table. To start `shell` and other user programs, you need to copy them into your SD card.  
-First, connect and mount your SD card (SD card reader required).
-```bash
-ls /dev/ # To check your SD device
-mount <your SD device name> <mount point>
-make sdcard dst="SD card mount point"
-umount <mount point>
-```
-Then, insert the SD card to your k210 board and run:
-```bash
-make run
-```
-Sometimes you should change the `USB serial port`:  
-```bash
-make run k210-serialport=`Your-USB-port`(default by ttyUSB0)
-```
-Ps: Most of the k210-port in Linux is ttyUSB0, if you use Windows or Mac OS, this doc 
-may help you: [maixpy-doc](https://maixpy.sipeed.com/zh/get_started/env_install_driver.html#)  
+## 💡 避坑指南与底层细节 (Gotchas)
 
-## Run on qemu-system-riscv64
-First, make sure `qemu-system-riscv64` is installed on your system.  
-Second, make a disk image file with FAT32 file system.
-```bash
-make fs
-```
-It will generate a disk image file `fs.img`, and compile some user programs like `shell` then copy them into the `fs.img`.  
-As long as the `fs.img` exists, you don't need to do this every time before running, unless you want to update it.
+在实现过程中，有几个极其隐蔽的底层 Bug，供后续参考：
 
-Finally, start running.
-```bash
-make run platform=qemu
-```
+### 1. 懒分配引发的 `vmunmap` Panic
+原始的 `vmunmap` 遇到未映射的 PTE（页表项）会直接触发内核 panic。
+* **解决方案**：引入懒分配后，物理页在首次访问前并不存在。因此必须将 `vmunmap` 中的 panic 改为 `continue` 跳过为空或有效位为 0 的 PTE。
 
-Ps: Press Ctrl + A then X to quit qemu.
+### 2. `copyin2` 对 mmap 区域的误拦截
+原始的 `copyin2` 函数仅通过检查用户空间地址是否小于进程堆顶 `sz` 来验证合法性。
+* **原因与修复**：引入 `mmap` 后，映射区通常位于内存高地址（本项目设置从 `0x60000000` 向下扩展），用户访问超过 `sz` 的 VMA 映射区是完全合法的。因此必须修改 `copyin2`，将其逻辑改为直接封装 `copyin`，委托给页表硬件系统来进行真实的内存地址合法性走查。
 
-## About shell
+### 3. `openat` 目录写权限的误判 Bug
+原 xv6 通过 `omode != O_RDONLY` 判断是否是对目录进行写操作。
+* **原因与修复**：由于 `O_RDONLY` 宏的值为 0，任何包含其他标志（如创建文件 `O_CREATE=0x40`）的非零 flags 都会触发该异常条件，导致正常操作被误拒。将判定条件精确修复为位运算 `flags & (O_WRONLY | O_RDWR)` 即可完美解决此 Bug。
 
-The shell commands are user programs, too. Those program should be put in a "/bin" directory in your SD card or the `fs.img`.  
-Now we support a few useful commands, such as `cd`, `ls`, `cat` and so on.
+### 4. 严苛的缺页异常处理流
+在 `usertrap` 中捕获 scause 为 12/13/15（取指/读/写缺页）的异常后，需要按严格的事务顺序完成：
+查找命中 VMA -> 权限比对 -> 物理页分配与清零 (`kalloc` + `memset`) -> 从文件按偏移读取内容（若有 `vm_file`） -> **双页表映射**（用户页表与内核页表同步建立映射）。任何一步失败都必须及时回滚释放物理页。
 
-In addition, `shell` supports some shortcut keys as below:
+## ✅ 测试情况
 
-- Ctrl-H -- backspace  
-- Ctrl-U -- kill a line  
-- Ctrl-D -- end of file (EOF)  
-- Ctrl-P -- print process list  
-
-## Add my programs on xv6-k210
-1. Make a new C source file in `xv6-user/` like `myprog.c`, and put your codes;
-2. You can include `user.h` to use the functions declared in it, such as `open`, `gets` and `printf`;
-3. Add a line "`$U/_myprog\`" in `Makefile` as below:
-    ```Makefile
-    UPROGS=\
-        $U/_init\
-        $U/_sh\
-        $U/_cat\
-        ...
-        $U/_myprog\      # Don't ignore the leading '_'
-    ```
-4. Then make:
-    ```bash
-    make userprogs
-    ```
-    Now you might see `_myprog` in `xv6-user/` if no error detected. Finally you need to copy it into your SD (see [here](#run-on-k210-board))
-     or FS image (see [here](#run-on-qemu-system-riscv64)).
-
-## Progress
-- [x] Multicore boot
-- [x] Bare-metal printf
-- [x] Memory alloc
-- [x] Page Table
-- [x] Timer interrupt
-- [x] S mode extern interrupt
-- [x] Receive uarths message
-- [x] SD card driver
-- [x] Process management
-- [x] File system
-- [x] User program
-- [X] Steady keyboard input(k210)
-
-## TODO
-Fix the bugs of U-mode exception on k210.
-
+本地 `oscomp` 测试套件的内存与文件系统相关测试点已全部通过：
+- `test_brk`
+- `test_mmap`
+- `test_munmap`
+- `test_openat`
