@@ -1,122 +1,37 @@
-# XV6-RISCV On K210
-Run xv6-riscv on k210 board  
-[English](./README.md) | [中文](./README_cn.md)   
+# 💻 Peking University OS Labs - Part 2: Process Management
 
-```
- (`-')           (`-')                   <-.(`-')                            
- (OO )_.->      _(OO )                    __( OO)                            
- (_| \_)--.,--.(_/,-.\  ,--.    (`-')    '-'. ,--.  .----.   .--.   .----.   
- \  `.'  / \   \ / (_/ /  .'    ( OO).-> |  .'   / \_,-.  | /_  |  /  ..  \  
-  \    .')  \   /   / .  / -.  (,------. |      /)    .' .'  |  | |  /  \  . 
-  .'    \  _ \     /_)'  .-. \  `------' |  .   '   .'  /_   |  | '  \  /  ' 
- /  .'.  \ \-'\   /   \  `-' /           |  |\   \ |      |  |  |  \  `'  /  
-`--'   '--'    `-'     `----'            `--' '--' `------'  `--'   `---''   
-```
+当前分支 (`process`) 包含了本人在北京大学操作系统课程实验 **Part 2（进程管理系统调用实现）** 的最终代码。
 
-![run-k210](./img/xv6-k210_run.gif)  
+本阶段的核心目标是扩展 xv6 的进程控制能力（引入轻量级线程创建、精细化子进程等待），并深度重构内核的时钟计时体系以适配 QEMU 硬件环境。
 
-## Dependencies
-+ `k210 board` or `qemu-system-riscv64`
-+ RISC-V Toolchain: [riscv-gnu-toolchain](https://github.com/riscv/riscv-gnu-toolchain.git)
+## 🚀 核心实现与特性
 
-## Installation
-```bash
-git clone https://github.com/HUST-OS/xv6-k210
-```
+本分支主要新增或重写了以下系统调用与底层机制：
 
-## Run on k210 board
-First you need to connect your k210 board to your PC.  
-And check the `USB serial port` (In my situation it will be `ttyUSB0`):  
-```bash
-ls /dev/ | grep USB
-```
-Build the kernel and user program:
+* **线程机制 (`SYS_clone` - 220)**：实现了类似 Linux 的 `clone` 系统调用。支持为子线程指定独立的用户栈，并正确继承父进程上下文。
+* **进程等待 (`SYS_wait4` - 260)**：在原生 `wait` 基础上，支持等待指定的 `target_pid`，并兼容 POSIX 规范的退出状态码格式。
+* **高精度时间 (`SYS_gettimeofday` - 169 & `SYS_nanosleep` - 101)**：分别实现了基于硬件时钟微秒级查询，以及基于操作系统时钟中断的纳秒级睡眠。
+* **进程基础控制**：补齐了 `getppid` (获取父进程) 和 `sched_yield` (主动让出 CPU) 等基础接口。
 
-```bash
-cd xv6-k210
-make build
-```
-Instead of the original file system, xv6-k210 runs with FAT32. You might need an SD card with FAT32 format.  
-Your SD card should NOT keep a partition table. To start `shell` and other user programs, you need to copy them into your SD card.  
-First, connect and mount your SD card (SD card reader required).
-```bash
-ls /dev/ # To check your SD device
-mount <your SD device name> <mount point>
-make sdcard dst="SD card mount point"
-umount <mount point>
-```
-Then, insert the SD card to your k210 board and run:
-```bash
-make run
-```
-Sometimes you should change the `USB serial port`:  
-```bash
-make run k210-serialport=`Your-USB-port`(default by ttyUSB0)
-```
-Ps: Most of the k210-port in Linux is ttyUSB0, if you use Windows or Mac OS, this doc 
-may help you: [maixpy-doc](https://maixpy.sipeed.com/zh/get_started/env_install_driver.html#)  
+## 💡 避坑指南与底层细节 (Gotchas)
 
-## Run on qemu-system-riscv64
-First, make sure `qemu-system-riscv64` is installed on your system.  
-Second, make a disk image file with FAT32 file system.
-```bash
-make fs
-```
-It will generate a disk image file `fs.img`, and compile some user programs like `shell` then copy them into the `fs.img`.  
-As long as the `fs.img` exists, you don't need to do this every time before running, unless you want to update it.
+在实现过程中，有几个极易踩坑的底层细节，供后续参考：
 
-Finally, start running.
-```bash
-make run platform=qemu
-```
+### 1. 两套时钟体系（Hardware Tick vs OS Tick）
+xv6-k210 原始代码针对真实 K210 开发板 (7.8MHz) 配置，在 QEMU 上每秒中断仅 4 次，导致时间系统严重失真。
+* **解决方案**：在 `param.h` 中修改 `INTERVAL`，将硬件时钟频率对齐 QEMU (`10000000` Hz)，使操作系统 tick（时钟中断频率）提升至 `200Hz`。
+* **分级计时**：`gettimeofday` 直接读取高精度的硬件寄存器 `r_time()`，而 `nanosleep` 则复用内核以系统 `ticks` 为单位的 `sleep` 机制。
 
-Ps: Press Ctrl + A then X to quit qemu.
+### 2. `clone` 接口的陷阱帧 (Trapframe) 设置
+最初测试 `clone` 时经常触发非法指令异常 (`scause 0x2`)，原因是 PC 指向了 0。
+* **原因与修复**：不能简单复制父进程的 `epc`。测试程序在 `ecall` 前将线程入口函数 `fn` 和参数 `arg` 压入了新栈。内核必须从新栈指针 (`a1`) 处读取 `fn` 写入 `child_proc->trapframe->epc`，读取 `arg` 写入 `a0`，才能让新线程正确跳转执行。
 
-## About shell
+### 3. POSIX 状态码格式 (`wait4`)
+测试程序使用 `WEXITSTATUS(status)`（即右移 8 位）来提取子进程的退出码。因此，在内核 `wait` 循环中找到僵尸子进程时，必须**提前将状态码左移 8 位 (`np->xstate << 8`)** 再写回用户态地址，否则用户态提取出的状态码永远是 0。
 
-The shell commands are user programs, too. Those program should be put in a "/bin" directory in your SD card or the `fs.img`.  
-Now we support a few useful commands, such as `cd`, `ls`, `cat` and so on.
+## ✅ 测试情况
 
-In addition, `shell` supports some shortcut keys as below:
-
-- Ctrl-H -- backspace  
-- Ctrl-U -- kill a line  
-- Ctrl-D -- end of file (EOF)  
-- Ctrl-P -- print process list  
-
-## Add my programs on xv6-k210
-1. Make a new C source file in `xv6-user/` like `myprog.c`, and put your codes;
-2. You can include `user.h` to use the functions declared in it, such as `open`, `gets` and `printf`;
-3. Add a line "`$U/_myprog\`" in `Makefile` as below:
-    ```Makefile
-    UPROGS=\
-        $U/_init\
-        $U/_sh\
-        $U/_cat\
-        ...
-        $U/_myprog\      # Don't ignore the leading '_'
-    ```
-4. Then make:
-    ```bash
-    make userprogs
-    ```
-    Now you might see `_myprog` in `xv6-user/` if no error detected. Finally you need to copy it into your SD (see [here](#run-on-k210-board))
-     or FS image (see [here](#run-on-qemu-system-riscv64)).
-
-## Progress
-- [x] Multicore boot
-- [x] Bare-metal printf
-- [x] Memory alloc
-- [x] Page Table
-- [x] Timer interrupt
-- [x] S mode extern interrupt
-- [x] Receive uarths message
-- [x] SD card driver
-- [x] Process management
-- [x] File system
-- [x] User program
-- [X] Steady keyboard input(k210)
-
-## TODO
-Fix the bugs of U-mode exception on k210.
-
+本地 `oscomp` 测试套件的 10 个测试点已全部完美通过：
+- `test_wait`, `test_waitpid`
+- `test_clone`, `test_fork`, `test_execve`, `test_exit`, `test_getppid`, `test_yield`
+- `test_gettimeofday`, `test_sleep`
