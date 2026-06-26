@@ -1,3 +1,26 @@
+# 💻 Peking University OS Labs - xv6-k210
+
+这个仓库包含了本人在北京大学操作系统课程中完成的内核实验（Lab）的个人完整实现代码。
+本项目基于底层的 `xv6-k210` 框架（详见下方官方说明），在 RISC-V64 架构和 FAT32 文件系统的基础上，循序渐进地实现并完善了操作系统的各个核心子系统。
+
+## 🌲 实验目录与分支导航 (Lab Branches)
+
+本实验共分为 8 个部分。为了保留每个阶段真实的开发记录与代码现场，各个 Part 的最终代码被妥善保存在了**独立的分支**中。你可以通过页面左上角的 Branch 菜单切换查看：
+
+* **Part 1: System calls** (`syscall` - 📍 **当前默认分支**)：initcode 64位适配与基础系统调用
+* **Part 2: Process management** (`process`)：clone 线程机制、wait4 及内核时钟体系适配
+* **Part 3: Memory mapping** (`mmap`)：VMA 管理、mmap/munmap 及缺页懒分配
+* **Part 4: Process scheduling** (`sched`)：Round-Robin、优先级调度与多级反馈队列 (MLFQ)
+* **Part 5: Copy-on-write** (`cow`)：懒分配 (Lazy Allocation) 与写时复制 (COW) 的物理页管理
+* **Part 6: Page replacement** (`swap`)：内存 Swap 区模拟与 FIFO / LRU 页面置换算法
+* **Part 7: File system** (`fs`)：基于 FAT32 的进阶文件系统调用 (getdents64 等)
+* **Part 8: Semaphore** (`semaphore`)：内核级信号量 (P/V) 实现及哲学家就餐问题
+
+并在一部分lab的README.md写了相应lab的一些提示和总结。
+
+---
+
+> *以下为 xv6-k210 官方框架的原始说明 / Below is the original README from the upstream xv6-k210 repository:*
 # XV6-RISCV On K210
 Run xv6-riscv on k210 board  
 [English](./README.md) | [中文](./README_cn.md)   
